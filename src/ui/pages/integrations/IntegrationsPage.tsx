@@ -1,0 +1,481 @@
+import { useState } from 'react'
+import {
+  Store,
+  CheckCircle2,
+  AlertCircle,
+  Clock,
+  RefreshCw,
+  Unlink,
+  ExternalLink,
+  ShieldCheck,
+  Zap,
+} from 'lucide-react'
+
+// ─── Social platform SVG icons ────────────────────────────────────────────────
+
+const InstagramIcon = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" />
+  </svg>
+)
+
+const TwitterIcon = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+  </svg>
+)
+
+const YoutubeIcon = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
+  </svg>
+)
+
+const LinkedinIcon = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+  </svg>
+)
+
+const TikTokIcon = ({ size = 18 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.18 8.18 0 004.78 1.52V6.76a4.85 4.85 0 01-1.01-.07z" />
+  </svg>
+)
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type SocialPlatform = 'instagram' | 'tiktok' | 'twitter' | 'youtube' | 'linkedin'
+type ConnectionStatus = 'active' | 'expired' | 'revoked' | 'disconnected'
+
+interface SocialAccount {
+  id: string
+  platform: SocialPlatform
+  platformUsername: string
+  platformDisplayName: string
+  avatarInitial: string
+  avatarColor: string
+  status: ConnectionStatus
+  scopes: string[]
+  connectedAt: string
+  lastSyncedAt?: string
+  tokenExpiresAt?: string
+}
+
+// ─── Mock data ────────────────────────────────────────────────────────────────
+
+const mockAccounts: SocialAccount[] = [
+  {
+    id: '1',
+    platform: 'instagram',
+    platformUsername: 'nadhem.creates',
+    platformDisplayName: 'Nadhem Creates',
+    avatarInitial: 'N',
+    avatarColor: '#E4405F',
+    status: 'active',
+    scopes: ['instagram_basic', 'instagram_content_publish', 'instagram_manage_insights'],
+    connectedAt: 'Jan 12, 2026',
+    lastSyncedAt: '2 hours ago',
+    tokenExpiresAt: 'Jul 12, 2026',
+  },
+  {
+    id: '2',
+    platform: 'twitter',
+    platformUsername: '@nadhem_io',
+    platformDisplayName: 'Nadhem',
+    avatarInitial: 'N',
+    avatarColor: '#1DA1F2',
+    status: 'expired',
+    scopes: ['tweet.read', 'tweet.write', 'users.read'],
+    connectedAt: 'Feb 3, 2026',
+    lastSyncedAt: '3 days ago',
+    tokenExpiresAt: 'May 3, 2026',
+  },
+]
+
+// ─── Platform config ──────────────────────────────────────────────────────────
+
+interface PlatformDef {
+  label: string
+  color: string
+  Icon: React.ElementType
+  description: string
+  features: string[]
+}
+
+const platforms: Record<SocialPlatform, PlatformDef> = {
+  instagram: {
+    label: 'Instagram',
+    color: '#E4405F',
+    Icon: InstagramIcon,
+    description: 'Publish posts, reels, and stories. Sync engagement metrics.',
+    features: ['Post & Reel publishing', 'Story scheduling', 'Insights sync', 'Competitor tracking'],
+  },
+  tiktok: {
+    label: 'TikTok',
+    color: '#69C9D0',
+    Icon: TikTokIcon,
+    description: 'Upload videos and sync TikTok performance data.',
+    features: ['Video publishing', 'Caption & hashtags', 'View & engagement sync', 'Competitor tracking'],
+  },
+  twitter: {
+    label: 'Twitter / X',
+    color: '#1DA1F2',
+    Icon: TwitterIcon,
+    description: 'Post tweets and threads. Track impressions and engagement.',
+    features: ['Tweet & thread posting', 'Impression tracking', 'Engagement sync', 'Competitor tracking'],
+  },
+  youtube: {
+    label: 'YouTube',
+    color: '#FF0000',
+    Icon: YoutubeIcon,
+    description: 'Upload videos and sync YouTube analytics.',
+    features: ['Video upload', 'Description & tags', 'View & subscriber sync', 'Competitor tracking'],
+  },
+  linkedin: {
+    label: 'LinkedIn',
+    color: '#0A66C2',
+    Icon: LinkedinIcon,
+    description: 'Publish professional posts and articles. Sync reach metrics.',
+    features: ['Post publishing', 'Article scheduling', 'Reach & impression sync', 'Competitor tracking'],
+  },
+}
+
+// ─── Status badge ─────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: ConnectionStatus }) {
+  const config = {
+    active:       { label: 'Active',       color: 'var(--success)', bg: 'rgba(34,197,94,0.12)',   Icon: CheckCircle2 },
+    expired:      { label: 'Token Expired', color: 'var(--warning)', bg: 'rgba(245,158,11,0.12)', Icon: Clock },
+    revoked:      { label: 'Revoked',       color: 'var(--danger)',  bg: 'rgba(239,68,68,0.12)',  Icon: AlertCircle },
+    disconnected: { label: 'Disconnected',  color: 'var(--text-muted)', bg: 'var(--bg-hover)',    Icon: AlertCircle },
+  }[status]
+
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+      style={{ backgroundColor: config.bg, color: config.color }}
+    >
+      <config.Icon size={11} />
+      {config.label}
+    </span>
+  )
+}
+
+// ─── Connected account card ───────────────────────────────────────────────────
+
+function ConnectedAccountCard({ account }: { account: SocialAccount }) {
+  const { label, color, Icon } = platforms[account.platform]
+
+  return (
+    <div
+      className="rounded-2xl p-5 transition-all"
+      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
+    >
+      <div className="flex items-start justify-between gap-4">
+        {/* Left: avatar + info */}
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <div
+              className="flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold text-white"
+              style={{ backgroundColor: account.avatarColor }}
+            >
+              {account.avatarInitial}
+            </div>
+            <div
+              className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full"
+              style={{ backgroundColor: color, color: '#fff' }}
+            >
+              <Icon size={11} />
+            </div>
+          </div>
+          <div>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+              {account.platformDisplayName}
+            </p>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              {account.platformUsername} · {label}
+            </p>
+          </div>
+        </div>
+
+        {/* Right: status + actions */}
+        <div className="flex items-center gap-2">
+          <StatusBadge status={account.status} />
+          {account.status === 'expired' && (
+            <button
+              className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold text-white transition-all hover:opacity-90"
+              style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
+            >
+              <RefreshCw size={11} />
+              Reconnect
+            </button>
+          )}
+          <button
+            className="rounded-xl p-1.5 transition-all hover:opacity-80"
+            style={{ backgroundColor: 'rgba(239,68,68,0.10)', color: 'var(--danger)' }}
+            title="Disconnect"
+          >
+            <Unlink size={13} />
+          </button>
+        </div>
+      </div>
+
+      {/* Meta row */}
+      <div
+        className="mt-4 flex flex-wrap items-center gap-4 border-t pt-4 text-xs"
+        style={{ borderColor: 'var(--border)', color: 'var(--text-muted)' }}
+      >
+        <span>Connected {account.connectedAt}</span>
+        {account.lastSyncedAt && <span>Last synced {account.lastSyncedAt}</span>}
+        {account.tokenExpiresAt && (
+          <span style={{ color: account.status === 'expired' ? 'var(--warning)' : 'inherit' }}>
+            Token expires {account.tokenExpiresAt}
+          </span>
+        )}
+      </div>
+
+      {/* Scopes */}
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {account.scopes.map((scope) => (
+          <span
+            key={scope}
+            className="rounded-md px-2 py-0.5 text-[10px] font-medium"
+            style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-muted)' }}
+          >
+            {scope}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Platform tile ────────────────────────────────────────────────────────────
+
+function PlatformTile({
+  def,
+  connected,
+  onConnect,
+}: {
+  platform: SocialPlatform
+  def: PlatformDef
+  connected: boolean
+  onConnect: () => void
+}) {
+  const { label, color, Icon, description, features } = def
+
+  return (
+    <div
+      className="flex flex-col rounded-2xl p-5 transition-all"
+      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div
+            className="flex h-10 w-10 items-center justify-center rounded-xl"
+            style={{ backgroundColor: `${color}22`, color }}
+          >
+            <Icon size={20} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+              {label}
+            </p>
+            {connected && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-semibold"
+                style={{ color: 'var(--success)' }}
+              >
+                <CheckCircle2 size={10} />
+                Connected
+              </span>
+            )}
+          </div>
+        </div>
+
+        {connected ? (
+          <button
+            className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition-all hover:opacity-80"
+            style={{
+              backgroundColor: 'var(--bg-hover)',
+              border: '1px solid var(--border)',
+              color: 'var(--text-muted)',
+            }}
+          >
+            <ExternalLink size={11} />
+            Manage
+          </button>
+        ) : (
+          <button
+            onClick={onConnect}
+            className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold text-white transition-all hover:opacity-90 glow-primary"
+            style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
+          >
+            <Zap size={11} />
+            Connect
+          </button>
+        )}
+      </div>
+
+      {/* Description */}
+      <p className="mt-3 text-xs leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+        {description}
+      </p>
+
+      {/* Features */}
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {features.map((f) => (
+          <span
+            key={f}
+            className="rounded-md px-2 py-0.5 text-[10px] font-medium"
+            style={{ backgroundColor: `${color}14`, color }}
+          >
+            {f}
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function IntegrationsPage() {
+  const [activeTab, setActiveTab] = useState<'connected' | 'available'>('connected')
+
+  const connectedPlatforms = new Set(mockAccounts.map((a) => a.platform))
+
+  const tabs = [
+    { id: 'connected' as const, label: 'Connected Accounts', count: mockAccounts.length },
+    { id: 'available' as const, label: 'Available Platforms', count: Object.keys(platforms).length },
+  ]
+
+  return (
+    <div className="mx-auto max-w-4xl space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Store size={20} style={{ color: 'var(--primary)' }} />
+            <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>
+              Integrations
+            </h1>
+          </div>
+          <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
+            Connect your social media accounts to publish content and sync analytics.
+          </p>
+        </div>
+
+        {/* Security note */}
+        <div
+          className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs"
+          style={{
+            backgroundColor: 'rgba(34,197,94,0.08)',
+            border: '1px solid rgba(34,197,94,0.2)',
+            color: 'var(--success)',
+          }}
+        >
+          <ShieldCheck size={13} />
+          Tokens encrypted with AES-256-GCM
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div
+        className="flex gap-1 rounded-xl p-1"
+        style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
+      >
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-all"
+            style={{
+              backgroundColor: activeTab === tab.id ? 'var(--bg-hover)' : 'transparent',
+              color: activeTab === tab.id ? 'var(--text)' : 'var(--text-muted)',
+            }}
+          >
+            {tab.label}
+            <span
+              className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+              style={{
+                backgroundColor:
+                  activeTab === tab.id ? 'rgba(108,59,255,0.18)' : 'var(--bg-hover)',
+                color: activeTab === tab.id ? '#A084FF' : 'var(--text-muted)',
+              }}
+            >
+              {tab.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {activeTab === 'connected' ? (
+        <div className="space-y-4">
+          {mockAccounts.length === 0 ? (
+            <div
+              className="flex flex-col items-center justify-center rounded-2xl py-20"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
+            >
+              <Store size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+              <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>
+                No accounts connected yet
+              </p>
+              <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+                Go to "Available Platforms" to connect your first account.
+              </p>
+              <button
+                onClick={() => setActiveTab('available')}
+                className="mt-5 rounded-xl px-5 py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90 glow-primary"
+                style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
+              >
+                Browse Platforms
+              </button>
+            </div>
+          ) : (
+            <>
+              {/* Expired warning */}
+              {mockAccounts.some((a) => a.status === 'expired') && (
+                <div
+                  className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm"
+                  style={{
+                    backgroundColor: 'rgba(245,158,11,0.08)',
+                    border: '1px solid rgba(245,158,11,0.25)',
+                    color: 'var(--warning)',
+                  }}
+                >
+                  <AlertCircle size={15} />
+                  <span>
+                    One or more accounts have expired tokens. Reconnect them to resume publishing.
+                  </span>
+                </div>
+              )}
+
+              {mockAccounts.map((account) => (
+                <ConnectedAccountCard key={account.id} account={account} />
+              ))}
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          {(Object.entries(platforms) as [SocialPlatform, PlatformDef][]).map(([key, def]) => (
+            <PlatformTile
+              key={key}
+              platform={key}
+              def={def}
+              connected={connectedPlatforms.has(key)}
+              onConnect={() => {
+                // OAuth flow would be initiated here via IPC
+                console.log(`Connect ${key}`)
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
