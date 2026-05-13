@@ -22,7 +22,6 @@ export function decrypt(ciphertext: string, secret: string): string {
   const key = deriveKey(secret)
   const [iv, tag, encrypted] = ciphertext.split(':')
   const decipher = createDecipheriv(ALGORITHM, key, iv)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  decipher.setAuthTag(tag as any)
+  decipher.setAuthTag(Uint8Array.from(Buffer.from(tag, 'hex')))
   return decipher.update(encrypted, 'hex', 'utf8') + decipher.final('utf8')
 }

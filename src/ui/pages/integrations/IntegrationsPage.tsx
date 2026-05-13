@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Store,
   CheckCircle2,
@@ -9,6 +9,7 @@ import {
   ExternalLink,
   ShieldCheck,
   Zap,
+  Loader2,
 } from 'lucide-react'
 
 // ─── Social platform SVG icons ────────────────────────────────────────────────
@@ -62,36 +63,15 @@ interface SocialAccount {
   tokenExpiresAt?: string
 }
 
-// ─── Mock data ────────────────────────────────────────────────────────────────
+// ─── Platform color map (used for avatar colors) ─────────────────────────────
 
-const mockAccounts: SocialAccount[] = [
-  {
-    id: '1',
-    platform: 'instagram',
-    platformUsername: 'nadhem.creates',
-    platformDisplayName: 'Nadhem Creates',
-    avatarInitial: 'N',
-    avatarColor: '#E4405F',
-    status: 'active',
-    scopes: ['instagram_basic', 'instagram_content_publish', 'instagram_manage_insights'],
-    connectedAt: 'Jan 12, 2026',
-    lastSyncedAt: '2 hours ago',
-    tokenExpiresAt: 'Jul 12, 2026',
-  },
-  {
-    id: '2',
-    platform: 'twitter',
-    platformUsername: '@nadhem_io',
-    platformDisplayName: 'Nadhem',
-    avatarInitial: 'N',
-    avatarColor: '#1DA1F2',
-    status: 'expired',
-    scopes: ['tweet.read', 'tweet.write', 'users.read'],
-    connectedAt: 'Feb 3, 2026',
-    lastSyncedAt: '3 days ago',
-    tokenExpiresAt: 'May 3, 2026',
-  },
-]
+const platformConfig: Record<SocialPlatform, { color: string }> = {
+  instagram: { color: '#E4405F' },
+  tiktok:    { color: '#69C9D0' },
+  twitter:   { color: '#1DA1F2' },
+  youtube:   { color: '#FF0000' },
+  linkedin:  { color: '#0A66C2' },
+}
 
 // ─── Platform config ──────────────────────────────────────────────────────────
 
@@ -164,7 +144,7 @@ function StatusBadge({ status }: { status: ConnectionStatus }) {
 
 // ─── Connected account card ───────────────────────────────────────────────────
 
-function ConnectedAccountCard({ account }: { account: SocialAccount }) {
+function ConnectedAccountCard({ account, onDisconnect }: { account: SocialAccount; onDisconnect: () => void }) {
   const { label, color, Icon } = platforms[account.platform]
 
   return (
@@ -212,6 +192,7 @@ function ConnectedAccountCard({ account }: { account: SocialAccount }) {
             </button>
           )}
           <button
+            onClick={onDisconnect}
             className="rounded-xl p-1.5 transition-all hover:opacity-80"
             style={{ backgroundColor: 'rgba(239,68,68,0.10)', color: 'var(--danger)' }}
             title="Disconnect"
@@ -256,11 +237,13 @@ function ConnectedAccountCard({ account }: { account: SocialAccount }) {
 function PlatformTile({
   def,
   connected,
+  connecting,
   onConnect,
 }: {
   platform: SocialPlatform
   def: PlatformDef
   connected: boolean
+  connecting: boolean
   onConnect: () => void
 }) {
   const { label, color, Icon, description, features } = def
@@ -310,11 +293,14 @@ function PlatformTile({
         ) : (
           <button
             onClick={onConnect}
-            className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold text-white transition-all hover:opacity-90 glow-primary"
+            disabled={connecting}
+            className="flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold text-white transition-all hover:opacity-90 glow-primary disabled:opacity-60"
             style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
           >
-            <Zap size={11} />
-            Connect
+            {connecting
+              ? <Loader2 size={11} className="animate-spin" />
+              : <Zap size={11} />}
+            {connecting ? 'Connecting...' : 'Connect'}
           </button>
         )}
       </div>
@@ -340,16 +326,130 @@ function PlatformTile({
   )
 }
 
+// ─── IPC bridge ───────────────────────────────────────────────────────────────
+
+interface IpcBridge {
+  invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
+  on: (channel: string, listener: (...args: unknown[]) => void) => void
+  off: (channel: string, listener: (...args: unknown[]) => void) => void
+}
+
+// Helper to safely call IPC (works in Electron, no-ops in browser)
+const ipc: IpcBridge = (window as any).ipcRenderer ?? {
+  invoke: async () => [],
+  on: () => {},
+  off: () => {},
+}
+
+// Hardcoded workspace ID until profile system is wired up
+const WORKSPACE_ID = 'default-workspace'
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function IntegrationsPage() {
-  const [activeTab, setActiveTab] = useState<'connected' | 'available'>('connected')
+  const [activeTab, setActiveTab]         = useState<'connected' | 'available'>('connected')
+  const [accounts, setAccounts]           = useState<SocialAccount[]>([])
+  const [connecting, setConnecting]       = useState<SocialPlatform | null>(null)
+  const [connectError, setConnectError]   = useState<string | null>(null)
+  const [showCodeInput, setShowCodeInput] = useState(false)
+  const [codeInput, setCodeInput]         = useState('')
 
-  const connectedPlatforms = new Set(mockAccounts.map((a) => a.platform))
+  // Load connected accounts from DB on mount
+  const loadAccounts = useCallback(async () => {
+    try {
+      const rows = await ipc.invoke('integration:list', WORKSPACE_ID) as any[]
+      const mapped: SocialAccount[] = rows.map(r => ({
+        id:                  r.id,
+        platform:            r.platform as SocialPlatform,
+        platformUsername:    r.platform_username,
+        platformDisplayName: r.platform_display_name,
+        avatarInitial:       (r.platform_display_name ?? r.platform_username ?? '?')[0].toUpperCase(),
+        avatarColor:         platformConfig[r.platform as SocialPlatform]?.color ?? '#888',
+        status:              'active' as const,
+        scopes:              r.scopes ?? [],
+        connectedAt:         r.connected_at,
+        lastSyncedAt:        r.last_synced_at,
+      }))
+      setAccounts(mapped)
+    } catch (err) {
+      console.error('Failed to load accounts:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadAccounts()
+
+    // Listen for real-time connection events
+    const handler = () => { loadAccounts() }
+    ipc.on('integration:connected', handler)
+    return () => { ipc.off('integration:connected', handler) }
+  }, [loadAccounts])
+
+  const handleConnect = async (platform: SocialPlatform) => {
+    if (platform !== 'instagram') {
+      setConnectError(`${platform} integration coming soon.`)
+      setTimeout(() => setConnectError(null), 3000)
+      return
+    }
+    setConnectError(null)
+    // Open browser for OAuth, then immediately show code input
+    try {
+      await ipc.invoke('integration:connect:instagram', WORKSPACE_ID)
+    } catch (err: any) {
+      setConnectError(err.message ?? 'Failed to open browser')
+      return
+    }
+    setShowCodeInput(true)
+  }
+
+  const handleSubmitCode = async () => {
+    let code = codeInput.trim()
+    if (!code) return
+
+    // If user pasted the full URL, extract just the code
+    if (code.includes('code=')) {
+      try {
+        const urlObj = new URL(code.includes('://') ? code : 'https://localhost?' + code.split('?')[1])
+        code = urlObj.searchParams.get('code') ?? code
+      } catch {
+        // try simple string extraction
+        const match = code.match(/[?&]code=([^&#]+)/)
+        if (match) code = match[1]
+      }
+    }
+
+    // Strip fragment
+    code = code.split('#')[0].trim()
+
+    setConnecting('instagram')
+    setConnectError(null)
+    try {
+      await ipc.invoke('integration:instagram:exchange-code', WORKSPACE_ID, code)
+      await loadAccounts()
+      setShowCodeInput(false)
+      setCodeInput('')
+      setActiveTab('connected')
+    } catch (err: any) {
+      setConnectError(err.message ?? 'Failed to exchange code')
+    } finally {
+      setConnecting(null)
+    }
+  }
+
+  const handleDisconnect = async (accountId: string) => {
+    try {
+      await ipc.invoke('integration:disconnect', accountId)
+      await loadAccounts()
+    } catch (err) {
+      console.error('Disconnect failed:', err)
+    }
+  }
+
+  const connectedPlatforms = new Set(accounts.map(a => a.platform))
 
   const tabs = [
-    { id: 'connected' as const, label: 'Connected Accounts', count: mockAccounts.length },
-    { id: 'available' as const, label: 'Available Platforms', count: Object.keys(platforms).length },
+    { id: 'connected' as const,  label: 'Connected Accounts', count: accounts.length },
+    { id: 'available' as const,  label: 'Available Platforms', count: Object.keys(platforms).length },
   ]
 
   return (
@@ -367,27 +467,77 @@ export default function IntegrationsPage() {
             Connect your social media accounts to publish content and sync analytics.
           </p>
         </div>
-
-        {/* Security note */}
         <div
           className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs"
-          style={{
-            backgroundColor: 'rgba(34,197,94,0.08)',
-            border: '1px solid rgba(34,197,94,0.2)',
-            color: 'var(--success)',
-          }}
+          style={{ backgroundColor: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)', color: 'var(--success)' }}
         >
           <ShieldCheck size={13} />
           Tokens encrypted with AES-256-GCM
         </div>
       </div>
 
+      {/* Error banner */}
+      {connectError && (
+        <div
+          className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm"
+          style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--danger)' }}
+        >
+          <AlertCircle size={15} />
+          {connectError}
+        </div>
+      )}
+
+      {/* Manual code input modal */}
+      {showCodeInput && (
+        <div
+          className="rounded-2xl p-5 space-y-4"
+          style={{ backgroundColor: 'rgba(108,59,255,0.08)', border: '1px solid rgba(108,59,255,0.3)' }}
+        >
+          <div>
+            <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+              Paste the code from your browser
+            </p>
+            <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+              After approving on Instagram, your browser showed an error page. Copy the full URL from the address bar and paste it below — or just the code value.
+            </p>
+            <p className="mt-1 text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
+              You can paste the full URL: <strong style={{ color: '#A084FF' }}>https://localhost/oauth/instagram?code=AQB...</strong>
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={codeInput}
+              onChange={e => setCodeInput(e.target.value)}
+              placeholder="Paste the full code here..."
+              className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text)' }}
+              onFocus={e => (e.currentTarget.style.borderColor = 'var(--primary)')}
+              onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+            />
+            <button
+              onClick={handleSubmitCode}
+              disabled={!codeInput.trim() || connecting === 'instagram'}
+              className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90 disabled:opacity-40 glow-primary"
+              style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
+            >
+              {connecting === 'instagram' ? <Loader2 size={14} className="animate-spin" /> : null}
+              Connect
+            </button>
+            <button
+              onClick={() => { setShowCodeInput(false); setCodeInput('') }}
+              className="rounded-xl px-4 py-2.5 text-sm font-medium transition-all hover:opacity-80"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Tabs */}
-      <div
-        className="flex gap-1 rounded-xl p-1"
-        style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
-      >
-        {tabs.map((tab) => (
+      <div className="flex gap-1 rounded-xl p-1" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
@@ -401,8 +551,7 @@ export default function IntegrationsPage() {
             <span
               className="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
               style={{
-                backgroundColor:
-                  activeTab === tab.id ? 'rgba(108,59,255,0.18)' : 'var(--bg-hover)',
+                backgroundColor: activeTab === tab.id ? 'rgba(108,59,255,0.18)' : 'var(--bg-hover)',
                 color: activeTab === tab.id ? '#A084FF' : 'var(--text-muted)',
               }}
             >
@@ -415,7 +564,7 @@ export default function IntegrationsPage() {
       {/* Tab content */}
       {activeTab === 'connected' ? (
         <div className="space-y-4">
-          {mockAccounts.length === 0 ? (
+          {accounts.length === 0 ? (
             <div
               className="flex flex-col items-center justify-center rounded-2xl py-20"
               style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
@@ -437,25 +586,21 @@ export default function IntegrationsPage() {
             </div>
           ) : (
             <>
-              {/* Expired warning */}
-              {mockAccounts.some((a) => a.status === 'expired') && (
+              {accounts.some(a => a.status === 'expired') && (
                 <div
                   className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm"
-                  style={{
-                    backgroundColor: 'rgba(245,158,11,0.08)',
-                    border: '1px solid rgba(245,158,11,0.25)',
-                    color: 'var(--warning)',
-                  }}
+                  style={{ backgroundColor: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: 'var(--warning)' }}
                 >
                   <AlertCircle size={15} />
-                  <span>
-                    One or more accounts have expired tokens. Reconnect them to resume publishing.
-                  </span>
+                  One or more accounts have expired tokens. Reconnect them to resume publishing.
                 </div>
               )}
-
-              {mockAccounts.map((account) => (
-                <ConnectedAccountCard key={account.id} account={account} />
+              {accounts.map(account => (
+                <ConnectedAccountCard
+                  key={account.id}
+                  account={account}
+                  onDisconnect={() => handleDisconnect(account.id)}
+                />
               ))}
             </>
           )}
@@ -468,10 +613,8 @@ export default function IntegrationsPage() {
               platform={key}
               def={def}
               connected={connectedPlatforms.has(key)}
-              onConnect={() => {
-                // OAuth flow would be initiated here via IPC
-                console.log(`Connect ${key}`)
-              }}
+              connecting={connecting === key}
+              onConnect={() => handleConnect(key)}
             />
           ))}
         </div>

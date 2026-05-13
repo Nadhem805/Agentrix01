@@ -1,0 +1,5 @@
+export { InstagramClient } from './instagramClient'
+export { TikTokClient }   from './tiktokClient'
+export { TwitterClient }  from './twitterClient'
+export { YouTubeClient }  from './youtubeClient'
+export { LinkedInClient } from './linkedinClient'

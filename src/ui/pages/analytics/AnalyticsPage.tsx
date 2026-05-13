@@ -1,5 +1,5 @@
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   TrendingUp,
@@ -9,183 +9,150 @@ import {
   Eye,
   RefreshCw,
   ArrowUpRight,
-  ArrowDownRight,
   Minus,
   Award,
   Zap,
-  Calendar,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react'
+
+// ─── IPC bridge ───────────────────────────────────────────────────────────────
+
+interface IpcBridge {
+  invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
+}
+const ipc: IpcBridge = (window as any).ipcRenderer ?? { invoke: async () => null }
+const WORKSPACE_ID = 'default-workspace'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SocialPlatform = 'instagram' | 'tiktok' | 'twitter' | 'youtube' | 'linkedin'
 type DateRange = '7d' | '30d' | '90d'
+type Tab = 'overview' | 'top-posts' | 'growth' | 'audience' | 'hashtags'
 
-interface StatCard {
-  label: string
-  value: string
-  change: number
-  icon: React.ElementType
-  color: string
+interface ConnectedAccount {
+  id:                   string
+  platform:             SocialPlatform
+  platform_username:    string
+  platform_display_name: string
+  is_active:            number
+}
+
+interface OverviewData {
+  totalPosts:        number
+  totalEngagements:  number
+  avgEngagementRate: number
+  followerCount:     number
+  impressions:       number
 }
 
 interface TopPost {
-  id: string
-  platform: SocialPlatform
-  caption: string
-  likes: number
-  comments: number
-  shares: number
-  views?: number
-  engagementRate: number
-  publishedAt: string
-  platformColor: string
-  platformInitial: string
+  id:              string
+  caption:         string
+  platform:        SocialPlatform
+  permalink?:      string
+  likes:           number
+  comments:        number
+  shares:          number
+  saves:           number
+  impressions:     number
+  reach:           number
+  video_views?:    number
+  engagement_rate: number
+  published_at:    string
 }
 
 interface TrendPoint {
-  label: string
-  instagram: number
-  tiktok: number
-  twitter: number
-  youtube: number
-  linkedin: number
+  date:           string
+  avg_engagement: number
+  likes:          number
+  comments:       number
+  shares:         number
+  post_count:     number
 }
 
-interface HeatmapCell {
-  day: number
-  hour: number
+interface AccountMetric {
+  follower_count: number
+  total_posts:    number
+  recorded_at:    string
+  platform:       string
+}
+
+interface PostingTime {
+  hour:           number
+  day_of_week:    number
+  avg_engagement: number
+  post_count:     number
+}
+
+interface HashtagStat {
+  hashtag:        string
+  avg_engagement: number
+  total_likes:    number
+  post_count:     number
+}
+
+interface DemographicRow {
+  label: string
   value: number
 }
 
-// ─── Mock data ────────────────────────────────────────────────────────────────
-
-const overviewStats: StatCard[] = [
-  { label: 'Total Posts',       value: '87',    change: 12,   icon: BarChart2,  color: 'var(--primary)'   },
-  { label: 'Total Engagements', value: '48.3K', change: 18.4, icon: Heart,      color: '#E4405F'          },
-  { label: 'Avg. Engagement',   value: '4.7%',  change: 0.3,  icon: TrendingUp, color: 'var(--success)'   },
-  { label: 'Follower Growth',   value: '+1.2K', change: 8.1,  icon: Users,      color: 'var(--secondary)' },
-  { label: 'Impressions',       value: '312K',  change: 22.6, icon: Eye,        color: '#A84FFF'          },
-  { label: 'Posting Streak',    value: '14d',   change: 0,    icon: Zap,        color: 'var(--warning)'   },
-]
-
-const topPosts: TopPost[] = [
-  {
-    id: '1', platform: 'instagram',
-    caption: '5 content strategies that doubled my engagement #contentmarketing',
-    likes: 4820, comments: 312, shares: 891,
-    engagementRate: 8.4, publishedAt: 'May 3', platformColor: '#E4405F', platformInitial: 'IG',
-  },
-  {
-    id: '2', platform: 'tiktok',
-    caption: 'POV: You finally figured out the algorithm #creator #viral',
-    likes: 12400, comments: 980, shares: 3200, views: 184000,
-    engagementRate: 14.2, publishedAt: 'May 1', platformColor: '#69C9D0', platformInitial: 'TT',
-  },
-  {
-    id: '3', platform: 'twitter',
-    caption: "The algorithm changed again. Here's what you need to know (thread)",
-    likes: 2100, comments: 430, shares: 1800,
-    engagementRate: 5.2, publishedAt: 'Apr 29', platformColor: '#1DA1F2', platformInitial: 'X',
-  },
-  {
-    id: '4', platform: 'linkedin',
-    caption: 'How we grew our audience by 40% in 60 days — a breakdown',
-    likes: 1840, comments: 210, shares: 560,
-    engagementRate: 6.8, publishedAt: 'Apr 27', platformColor: '#0A66C2', platformInitial: 'LI',
-  },
-  {
-    id: '5', platform: 'youtube',
-    caption: 'Full content creation workflow for 2026 (tools + process)',
-    likes: 3200, comments: 540, shares: 890, views: 42000,
-    engagementRate: 9.1, publishedAt: 'Apr 24', platformColor: '#FF0000', platformInitial: 'YT',
-  },
-]
-
-const trendData: TrendPoint[] = [
-  { label: 'Apr 8',  instagram: 3.2, tiktok: 8.1,  twitter: 2.4, youtube: 5.2, linkedin: 3.8 },
-  { label: 'Apr 15', instagram: 4.1, tiktok: 9.4,  twitter: 3.1, youtube: 6.0, linkedin: 4.2 },
-  { label: 'Apr 22', instagram: 3.8, tiktok: 11.2, twitter: 2.8, youtube: 7.1, linkedin: 5.0 },
-  { label: 'Apr 29', instagram: 5.2, tiktok: 12.8, twitter: 4.0, youtube: 8.4, linkedin: 5.8 },
-  { label: 'May 6',  instagram: 4.7, tiktok: 14.2, twitter: 3.6, youtube: 9.1, linkedin: 6.2 },
-]
-
-const platformBreakdown = [
-  { platform: 'TikTok',    color: '#69C9D0', posts: 24, engagements: 18400, rate: 11.8, pct: 38 },
-  { platform: 'Instagram', color: '#E4405F', posts: 31, engagements: 14200, rate: 5.4,  pct: 29 },
-  { platform: 'YouTube',   color: '#FF0000', posts: 8,  engagements: 8900,  rate: 8.2,  pct: 18 },
-  { platform: 'Twitter/X', color: '#1DA1F2', posts: 18, engagements: 4800,  rate: 3.6,  pct: 10 },
-  { platform: 'LinkedIn',  color: '#0A66C2', posts: 6,  engagements: 2000,  rate: 5.1,  pct: 5  },
-]
-
-const heatmapData: HeatmapCell[] = Array.from({ length: 7 * 24 }, (_, i) => {
-  const day = Math.floor(i / 24)
-  const hour = i % 24
-  const isWeekday = day >= 1 && day <= 5
-  const isMorningPeak = hour >= 9 && hour <= 11
-  const isEveningPeak = hour >= 19 && hour <= 21
-  const base = isWeekday
-    ? (isMorningPeak || isEveningPeak ? Math.random() * 60 + 40 : Math.random() * 20)
-    : Math.random() * 30
-  return { day, hour, value: Math.round(base) }
-})
-
-const growthData = [
-  { month: 'Dec', followers: 8200,  posts: 14, reach: 42000  },
-  { month: 'Jan', followers: 9100,  posts: 18, reach: 58000  },
-  { month: 'Feb', followers: 10400, posts: 22, reach: 74000  },
-  { month: 'Mar', followers: 12100, posts: 19, reach: 91000  },
-  { month: 'Apr', followers: 14800, posts: 24, reach: 118000 },
-  { month: 'May', followers: 16000, posts: 8,  reach: 130000 },
-]
-
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const PLATFORM_COLORS: Record<SocialPlatform, string> = {
-  instagram: '#E4405F', tiktok: '#69C9D0', twitter: '#1DA1F2', youtube: '#FF0000', linkedin: '#0A66C2',
+interface Demographics {
+  countries: DemographicRow[]
+  cities:    DemographicRow[]
+  genderAge: DemographicRow[]
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+const PLATFORM_COLORS: Record<SocialPlatform, string> = {
+  instagram: '#E4405F', tiktok: '#69C9D0', twitter: '#1DA1F2',
+  youtube: '#FF0000', linkedin: '#0A66C2',
+}
+
+const PLATFORM_LABELS: Record<SocialPlatform, string> = {
+  instagram: 'Instagram', tiktok: 'TikTok', twitter: 'Twitter/X',
+  youtube: 'YouTube', linkedin: 'LinkedIn',
+}
+
+// Platform SVG icons (inline, no lucide dependency)
+const PlatformIcon = ({ platform, size = 14 }: { platform: SocialPlatform; size?: number }) => {
+  const paths: Record<SocialPlatform, string> = {
+    instagram: 'M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z',
+    tiktok: 'M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.18 8.18 0 004.78 1.52V6.76a4.85 4.85 0 01-1.01-.07z',
+    twitter: 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z',
+    youtube: 'M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z',
+    linkedin: 'M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z',
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d={paths[platform]} />
+    </svg>
+  )
+}
 
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
+  return String(Math.round(n))
 }
 
-// ─── SparkBars ────────────────────────────────────────────────────────────────
+// ─── TrendChart ───────────────────────────────────────────────────────────────
 
-function SparkBars({ data, color }: { data: number[]; color: string }) {
-  const max = Math.max(...data)
-  return (
-    <div className="flex h-10 items-end gap-0.5">
-      {data.map((v, i) => (
-        <div
-          key={i}
-          className="flex-1 rounded-sm"
-          style={{
-            height: `${(v / max) * 100}%`,
-            backgroundColor: color,
-            opacity: i === data.length - 1 ? 1 : 0.4 + (i / data.length) * 0.5,
-          }}
-        />
-      ))}
+function TrendChart({ data }: { data: TrendPoint[] }) {
+  if (!data.length) return (
+    <div className="flex h-40 items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
+      No trend data yet — sync your analytics first.
     </div>
   )
-}
 
-// ─── TrendChart (SVG line chart) ──────────────────────────────────────────────
-
-function TrendChart({ data, platforms }: { data: TrendPoint[]; platforms: SocialPlatform[] }) {
   const W = 600; const H = 160
-  const PAD = { top: 10, right: 10, bottom: 24, left: 32 }
+  const PAD = { top: 10, right: 10, bottom: 24, left: 36 }
   const iW = W - PAD.left - PAD.right
   const iH = H - PAD.top - PAD.bottom
-  const allVals = data.flatMap(d => platforms.map(p => d[p]))
-  const maxVal = platforms.length ? Math.max(...allVals) : 15
-  const x = (i: number) => PAD.left + (i / (data.length - 1)) * iW
+  const vals = data.map(d => d.avg_engagement)
+  const maxVal = Math.max(...vals, 1)
+  const x = (i: number) => PAD.left + (i / Math.max(data.length - 1, 1)) * iW
   const y = (v: number) => PAD.top + iH - (v / maxVal) * iH
-  const path = (p: SocialPlatform) =>
-    data.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d[p]).toFixed(1)}`).join(' ')
+  const path = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d.avg_engagement).toFixed(1)}`).join(' ')
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H }}>
@@ -203,98 +170,57 @@ function TrendChart({ data, platforms }: { data: TrendPoint[]; platforms: Social
       })}
       {data.map((d, i) => (
         <text key={i} x={x(i)} y={H - 4} textAnchor="middle" fontSize="9" fill="var(--text-muted)">
-          {d.label}
+          {d.date ? d.date.substring(5) : ''}
         </text>
       ))}
-      {platforms.map(p => (
-        <path key={p} d={path(p)} fill="none"
-          stroke={PLATFORM_COLORS[p]} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      ))}
-      {platforms.map(p => {
-        const last = data[data.length - 1]
-        return <circle key={p} cx={x(data.length - 1)} cy={y(last[p])} r="3" fill={PLATFORM_COLORS[p]} />
-      })}
+      <path d={path} fill="none" stroke="var(--primary)" strokeWidth="2"
+        strokeLinecap="round" strokeLinejoin="round" />
+      {data.length > 0 && (
+        <circle cx={x(data.length - 1)} cy={y(vals[vals.length - 1])} r="3" fill="var(--primary)" />
+      )}
     </svg>
-  )
-}
-
-// ─── ActivityHeatmap ─────────────────────────────────────────────────────────
-
-function ActivityHeatmap({ cells }: { cells: HeatmapCell[] }) {
-  const peakHours = [9, 10, 11, 19, 20, 21]
-  return (
-    <div className="overflow-x-auto">
-      <div className="flex gap-1" style={{ minWidth: 520 }}>
-        <div className="flex flex-col gap-0.5 pr-1">
-          <div className="h-5" />
-          {Array.from({ length: 24 }, (_, h) => (
-            <div key={h} className="flex h-4 w-6 items-center justify-end">
-              {h % 6 === 0 && (
-                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                  {h === 0 ? '12a' : h === 12 ? '12p' : h > 12 ? `${h - 12}p` : `${h}a`}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-        {DAYS.map((day, d) => (
-          <div key={day} className="flex flex-1 flex-col gap-0.5">
-            <div className="flex h-5 items-center justify-center">
-              <span className="text-[10px] font-medium" style={{ color: 'var(--text-muted)' }}>{day}</span>
-            </div>
-            {Array.from({ length: 24 }, (_, h) => {
-              const cell = cells.find(c => c.day === d && c.hour === h)
-              const v = cell?.value ?? 0
-              const opacity = v === 0 ? 0.05 : 0.1 + (v / 100) * 0.9
-              const isPeak = peakHours.includes(h)
-              return (
-                <div
-                  key={h}
-                  title={`${day} ${h}:00 — ${v} engagements`}
-                  className="h-4 w-full rounded-sm"
-                  style={{
-                    backgroundColor: isPeak && v > 30
-                      ? `rgba(108,59,255,${opacity})`
-                      : `rgba(59,169,255,${opacity * 0.6})`,
-                  }}
-                />
-              )
-            })}
-          </div>
-        ))}
-      </div>
-    </div>
   )
 }
 
 // ─── OverviewTab ──────────────────────────────────────────────────────────────
 
-function OverviewTab({ range }: { range: DateRange }) {
-  const allPlatforms: SocialPlatform[] = ['instagram', 'tiktok', 'twitter', 'youtube', 'linkedin']
-  const [visible, setVisible] = useState<SocialPlatform[]>(allPlatforms)
-  const toggle = (p: SocialPlatform) =>
-    setVisible(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p])
+function OverviewTab({ overview, trend, syncing }: {
+  overview: OverviewData | null
+  trend:    TrendPoint[]
+  syncing:  boolean
+}) {
+  const stats = overview ? [
+    { label: 'Total Posts',       value: fmt(overview.totalPosts),         icon: BarChart2,  color: 'var(--primary)'   },
+    { label: 'Total Engagements', value: fmt(overview.totalEngagements),   icon: Heart,      color: '#E4405F'          },
+    { label: 'Avg. Engagement',   value: overview.avgEngagementRate + '%', icon: TrendingUp, color: 'var(--success)'   },
+    { label: 'Followers',         value: fmt(overview.followerCount),      icon: Users,      color: 'var(--secondary)' },
+    { label: 'Impressions',       value: fmt(overview.impressions),        icon: Eye,        color: '#A84FFF'          },
+    { label: 'Data Source',       value: 'Instagram',                      icon: Zap,        color: 'var(--warning)'   },
+  ] : []
 
-  const sparkData = [
-    [62, 65, 70, 74, 78, 83, 87],
-    [31, 35, 38, 41, 44, 46, 48],
-    [3.8, 4.0, 4.2, 4.4, 4.5, 4.6, 4.7],
-    [800, 850, 920, 980, 1050, 1120, 1200],
-    [180, 210, 240, 265, 285, 300, 312],
-    [8, 9, 10, 11, 12, 13, 14],
-  ]
-  const sparkColors = [
-    'var(--primary)', '#E4405F', 'var(--success)', 'var(--secondary)', '#A84FFF', 'var(--warning)',
-  ]
-  const rangeLabel = range === '7d' ? 'last 7 days' : range === '30d' ? 'last 30 days' : 'last 90 days'
+  if (syncing) return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4">
+      <Loader2 size={32} className="animate-spin" style={{ color: 'var(--primary)' }} />
+      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Syncing your Instagram analytics...</p>
+    </div>
+  )
+
+  if (!overview) return (
+    <div className="flex flex-col items-center justify-center rounded-2xl py-20"
+      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+      <BarChart2 size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+      <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No analytics data yet</p>
+      <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+        Click "Sync" to fetch your Instagram analytics.
+      </p>
+    </div>
+  )
 
   return (
     <div className="space-y-6">
-      {/* Stat cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-        {overviewStats.map((stat, i) => (
-          <div key={stat.label}
-            className="rounded-2xl p-5 transition-all hover:scale-[1.02]"
+        {stats.map((stat, i) => (
+          <div key={stat.label} className="rounded-2xl p-5 transition-all hover:scale-[1.02]"
             style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
             <div className="flex items-start justify-between">
               <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{stat.label}</p>
@@ -304,109 +230,20 @@ function OverviewTab({ range }: { range: DateRange }) {
               </div>
             </div>
             <p className="mt-3 text-2xl font-bold" style={{ color: 'var(--text)' }}>{stat.value}</p>
-            <div className="mt-2 flex items-end justify-between gap-3">
-              <div className="flex items-center gap-1">
-                {stat.change > 0
-                  ? <ArrowUpRight size={13} style={{ color: 'var(--success)' }} />
-                  : stat.change < 0
-                    ? <ArrowDownRight size={13} style={{ color: 'var(--danger)' }} />
-                    : <Minus size={12} style={{ color: 'var(--text-muted)' }} />}
-                <span className="text-xs font-semibold" style={{
-                  color: stat.change > 0 ? 'var(--success)' : stat.change < 0 ? 'var(--danger)' : 'var(--text-muted)',
-                }}>
-                  {stat.change > 0 ? `+${stat.change}%` : stat.change < 0 ? `${stat.change}%` : 'No change'}
-                </span>
+            {i === 0 && (
+              <div className="mt-2 flex items-center gap-1">
+                <ArrowUpRight size={13} style={{ color: 'var(--success)' }} />
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Live from Instagram</span>
               </div>
-              <div className="w-20 shrink-0">
-                <SparkBars data={sparkData[i]} color={sparkColors[i]} />
-              </div>
-            </div>
+            )}
           </div>
         ))}
       </div>
 
-      {/* Engagement trend */}
-      <div className="rounded-2xl p-5"
-        style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
-              Engagement Rate Trend
-            </h3>
-            <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
-              Weekly avg. per platform — {rangeLabel}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {allPlatforms.map(p => {
-              const active = visible.includes(p)
-              const color = PLATFORM_COLORS[p]
-              const lbl = p === 'instagram' ? 'IG' : p === 'tiktok' ? 'TT' : p === 'twitter' ? 'X' : p === 'youtube' ? 'YT' : 'LI'
-              return (
-                <button key={p} onClick={() => toggle(p)}
-                  className="rounded-lg px-2.5 py-1 text-[10px] font-bold transition-all"
-                  style={{
-                    backgroundColor: active ? `${color}22` : 'var(--bg-hover)',
-                    color: active ? color : 'var(--text-muted)',
-                    border: `1px solid ${active ? color : 'transparent'}`,
-                  }}>
-                  {lbl}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-        <TrendChart data={trendData} platforms={visible} />
-      </div>
-
-      {/* Platform breakdown */}
-      <div className="rounded-2xl p-5"
-        style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-        <h3 className="mb-4 text-sm font-semibold" style={{ color: 'var(--text)' }}>Platform Breakdown</h3>
-        <div className="space-y-3">
-          {platformBreakdown.map(pb => (
-            <div key={pb.platform}>
-              <div className="mb-1 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: pb.color }} />
-                  <span className="text-sm font-medium" style={{ color: 'var(--text)' }}>{pb.platform}</span>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{pb.posts} posts</span>
-                </div>
-                <div className="flex items-center gap-4 text-xs">
-                  <span style={{ color: 'var(--text-muted)' }}>{fmt(pb.engagements)} eng.</span>
-                  <span className="font-semibold" style={{ color: 'var(--success)' }}>{pb.rate}%</span>
-                  <span className="w-8 text-right font-bold" style={{ color: 'var(--text)' }}>{pb.pct}%</span>
-                </div>
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full" style={{ backgroundColor: 'var(--bg-hover)' }}>
-                <div className="h-full rounded-full transition-all duration-700"
-                  style={{ width: `${pb.pct}%`, backgroundColor: pb.color }} />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Activity heatmap */}
-      <div className="rounded-2xl p-5"
-        style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Posting Activity Heatmap</h3>
-            <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>Engagement intensity by day and hour</p>
-          </div>
-          <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            <span>Low</span>
-            <div className="flex gap-0.5">
-              {[0.1, 0.3, 0.5, 0.7, 0.9].map(o => (
-                <div key={o} className="h-3 w-3 rounded-sm"
-                  style={{ backgroundColor: `rgba(108,59,255,${o})` }} />
-              ))}
-            </div>
-            <span>High</span>
-          </div>
-        </div>
-        <ActivityHeatmap cells={heatmapData} />
+      <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        <h3 className="mb-1 text-sm font-semibold" style={{ color: 'var(--text)' }}>Engagement Rate Trend</h3>
+        <p className="mb-4 text-xs" style={{ color: 'var(--text-muted)' }}>Daily avg. engagement rate from your posts</p>
+        <TrendChart data={trend} />
       </div>
     </div>
   )
@@ -414,18 +251,29 @@ function OverviewTab({ range }: { range: DateRange }) {
 
 // ─── TopPostsTab ──────────────────────────────────────────────────────────────
 
-function TopPostsTab() {
-  const [sortBy, setSortBy] = useState<'engagementRate' | 'likes' | 'views'>('engagementRate')
-  const sorted = [...topPosts].sort((a, b) => {
-    if (sortBy === 'views') return (b.views ?? 0) - (a.views ?? 0)
-    return b[sortBy] - a[sortBy]
+function TopPostsTab({ posts }: { posts: TopPost[] }) {
+  const [sortBy, setSortBy] = useState<'engagement_rate' | 'likes' | 'impressions'>('engagement_rate')
+
+  const sorted = [...posts].sort((a, b) => {
+    if (sortBy === 'likes') return b.likes - a.likes
+    if (sortBy === 'impressions') return b.impressions - a.impressions
+    return b.engagement_rate - a.engagement_rate
   })
+
+  if (!posts.length) return (
+    <div className="flex flex-col items-center justify-center rounded-2xl py-20"
+      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+      <Award size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+      <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No posts synced yet</p>
+      <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Sync your analytics to see top posts.</p>
+    </div>
+  )
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Sort by:</span>
-        {(['engagementRate', 'likes', 'views'] as const).map(key => (
+        {(['engagement_rate', 'likes', 'impressions'] as const).map(key => (
           <button key={key} onClick={() => setSortBy(key)}
             className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
             style={{
@@ -433,7 +281,7 @@ function TopPostsTab() {
               color: sortBy === key ? '#A084FF' : 'var(--text-muted)',
               border: `1px solid ${sortBy === key ? 'var(--primary)' : 'var(--border)'}`,
             }}>
-            {key === 'engagementRate' ? 'Engagement Rate' : key === 'likes' ? 'Likes' : 'Views'}
+            {key === 'engagement_rate' ? 'Engagement' : key === 'likes' ? 'Likes' : 'Impressions'}
           </button>
         ))}
       </div>
@@ -445,18 +293,14 @@ function TopPostsTab() {
           <div className="col-span-5">Post</div>
           <div className="col-span-1 text-right">Likes</div>
           <div className="col-span-1 text-right">Comments</div>
-          <div className="col-span-1 text-right">Shares</div>
-          <div className="col-span-1 text-right">Views</div>
+          <div className="col-span-1 text-right">Reach</div>
+          <div className="col-span-1 text-right">Impressions</div>
           <div className="col-span-2 text-right">Eng. Rate</div>
         </div>
-
         {sorted.map((post, i) => (
           <div key={post.id}
-            className="group grid grid-cols-12 items-center gap-4 px-5 py-4 transition-all hover:bg-[var(--bg-hover)]"
-            style={{
-              backgroundColor: 'var(--bg-card)',
-              borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none',
-            }}>
+            className="grid grid-cols-12 items-center gap-4 px-5 py-4 transition-all hover:bg-[var(--bg-hover)]"
+            style={{ backgroundColor: 'var(--bg-card)', borderBottom: i < sorted.length - 1 ? '1px solid var(--border)' : 'none' }}>
             <div className="col-span-1 flex items-center">
               {i === 0 ? <Award size={16} style={{ color: '#FCD34D' }} />
                 : i === 1 ? <Award size={16} style={{ color: '#9CA3AF' }} />
@@ -465,38 +309,30 @@ function TopPostsTab() {
             </div>
             <div className="col-span-5 flex min-w-0 items-center gap-3">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold text-white"
-                style={{ backgroundColor: post.platformColor }}>
-                {post.platformInitial}
+                style={{ backgroundColor: PLATFORM_COLORS[post.platform] ?? '#888' }}>
+                {post.platform.substring(0, 2).toUpperCase()}
               </div>
               <div className="min-w-0">
-                <p className="truncate text-sm" style={{ color: 'var(--text)' }}>{post.caption}</p>
-                <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>{post.publishedAt}</p>
+                <p className="truncate text-sm" style={{ color: 'var(--text)' }}>{post.caption || '(no caption)'}</p>
+                <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {post.published_at ? new Date(post.published_at).toLocaleDateString() : ''}
+                </p>
               </div>
             </div>
-            <div className="col-span-1 text-right text-sm font-medium" style={{ color: 'var(--text)' }}>
-              {fmt(post.likes)}
-            </div>
-            <div className="col-span-1 text-right text-sm font-medium" style={{ color: 'var(--text)' }}>
-              {fmt(post.comments)}
-            </div>
-            <div className="col-span-1 text-right text-sm font-medium" style={{ color: 'var(--text)' }}>
-              {fmt(post.shares)}
-            </div>
-            <div className="col-span-1 text-right text-sm" style={{ color: 'var(--text-muted)' }}>
-              {post.views ? fmt(post.views) : '—'}
-            </div>
+            <div className="col-span-1 text-right text-sm font-medium" style={{ color: 'var(--text)' }}>{fmt(post.likes)}</div>
+            <div className="col-span-1 text-right text-sm font-medium" style={{ color: 'var(--text)' }}>{fmt(post.comments)}</div>
+            <div className="col-span-1 text-right text-sm" style={{ color: 'var(--text-muted)' }}>{fmt(post.reach)}</div>
+            <div className="col-span-1 text-right text-sm" style={{ color: 'var(--text-muted)' }}>{fmt(post.impressions)}</div>
             <div className="col-span-2 flex items-center justify-end gap-2">
               <div className="h-1.5 w-16 overflow-hidden rounded-full" style={{ backgroundColor: 'var(--bg-hover)' }}>
                 <div className="h-full rounded-full" style={{
-                  width: `${Math.min((post.engagementRate / 15) * 100, 100)}%`,
-                  backgroundColor: post.engagementRate >= 10 ? 'var(--success)' : post.engagementRate >= 5 ? 'var(--warning)' : 'var(--text-muted)',
+                  width: `${Math.min((post.engagement_rate / 15) * 100, 100)}%`,
+                  backgroundColor: post.engagement_rate >= 10 ? 'var(--success)' : post.engagement_rate >= 5 ? 'var(--warning)' : 'var(--text-muted)',
                 }} />
               </div>
               <span className="text-sm font-bold" style={{
-                color: post.engagementRate >= 10 ? 'var(--success)' : post.engagementRate >= 5 ? 'var(--warning)' : 'var(--text-muted)',
-              }}>
-                {post.engagementRate}%
-              </span>
+                color: post.engagement_rate >= 10 ? 'var(--success)' : post.engagement_rate >= 5 ? 'var(--warning)' : 'var(--text-muted)',
+              }}>{post.engagement_rate}%</span>
             </div>
           </div>
         ))}
@@ -507,149 +343,334 @@ function TopPostsTab() {
 
 // ─── GrowthTab ────────────────────────────────────────────────────────────────
 
-function GrowthBarChart({ data, key1, key2, color1, color2, label1, label2 }: {
-  data: typeof growthData
-  key1: keyof typeof growthData[0]
-  key2: keyof typeof growthData[0]
-  color1: string; color2: string; label1: string; label2: string
-}) {
-  const max = Math.max(...data.flatMap(d => [Number(d[key1]), Number(d[key2])]))
-  return (
-    <div>
-      <div className="mb-3 flex gap-4">
-        {[{ color: color1, label: label1 }, { color: color2, label: label2 }].map(l => (
-          <div key={l.label} className="flex items-center gap-1.5">
-            <div className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: l.color }} />
-            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>{l.label}</span>
-          </div>
-        ))}
-      </div>
-      <div className="flex items-end gap-3" style={{ height: 120 }}>
-        {data.map(d => (
-          <div key={String(d.month)} className="flex flex-1 flex-col items-center gap-1">
-            <div className="flex w-full items-end justify-center gap-0.5" style={{ height: 100 }}>
-              {[{ val: Number(d[key1]), color: color1 }, { val: Number(d[key2]), color: color2 }].map((b, bi) => (
-                <div key={bi} className="flex-1 rounded-t-sm transition-all duration-700"
-                  style={{ height: `${(b.val / max) * 100}%`, backgroundColor: b.color, opacity: 0.85 }} />
-              ))}
-            </div>
-            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{d.month}</span>
-          </div>
-        ))}
-      </div>
+function GrowthTab({ accountMetrics }: { accountMetrics: AccountMetric[] }) {
+  if (!accountMetrics.length) return (
+    <div className="flex flex-col items-center justify-center rounded-2xl py-20"
+      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+      <Users size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+      <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No growth data yet</p>
+      <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Sync your analytics to track follower growth.</p>
     </div>
   )
-}
 
-function GrowthTab() {
-  const latest = growthData[growthData.length - 1]
-  const prev   = growthData[growthData.length - 2]
-  const fGrowth = (((latest.followers - prev.followers) / prev.followers) * 100).toFixed(1)
-  const rGrowth = (((latest.reach - prev.reach) / prev.reach) * 100).toFixed(1)
-
-  const kpis = [
-    { label: 'Total Followers',  value: fmt(latest.followers), change: fGrowth, icon: Users,    color: 'var(--secondary)' },
-    { label: 'Monthly Reach',    value: fmt(latest.reach),     change: rGrowth, icon: Eye,      color: '#A84FFF'          },
-    { label: 'Posts This Month', value: String(latest.posts),  change: null,    icon: Calendar, color: 'var(--primary)'   },
-  ]
+  const latest = accountMetrics[0]
+  const prev   = accountMetrics[1]
+  const growth = prev ? (((latest.follower_count - prev.follower_count) / prev.follower_count) * 100).toFixed(1) : null
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-4">
-        {kpis.map(kpi => (
-          <div key={kpi.label} className="rounded-2xl p-5"
-            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-            <div className="flex items-start justify-between">
-              <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{kpi.label}</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl"
-                style={{ backgroundColor: `${kpi.color}18`, color: kpi.color }}>
-                <kpi.icon size={15} />
-              </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Total Followers</p>
+          <p className="mt-3 text-3xl font-bold" style={{ color: 'var(--text)' }}>{fmt(latest.follower_count)}</p>
+          {growth && (
+            <div className="mt-1.5 flex items-center gap-1">
+              <ArrowUpRight size={13} style={{ color: 'var(--success)' }} />
+              <span className="text-xs font-semibold" style={{ color: 'var(--success)' }}>+{growth}% since last sync</span>
             </div>
-            <p className="mt-3 text-2xl font-bold" style={{ color: 'var(--text)' }}>{kpi.value}</p>
-            {kpi.change !== null && (
-              <div className="mt-1.5 flex items-center gap-1">
-                <ArrowUpRight size={13} style={{ color: 'var(--success)' }} />
-                <span className="text-xs font-semibold" style={{ color: 'var(--success)' }}>
-                  +{kpi.change}% this month
-                </span>
-              </div>
-            )}
+          )}
+        </div>
+        <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Total Posts</p>
+          <p className="mt-3 text-3xl font-bold" style={{ color: 'var(--text)' }}>{latest.total_posts}</p>
+          <div className="mt-1.5 flex items-center gap-1">
+            <Minus size={12} style={{ color: 'var(--text-muted)' }} />
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>on {latest.platform}</span>
           </div>
-        ))}
-      </div>
-
-      <div className="rounded-2xl p-5"
-        style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-        <h3 className="mb-1 text-sm font-semibold" style={{ color: 'var(--text)' }}>
-          Follower Growth vs. Reach
-        </h3>
-        <p className="mb-4 text-xs" style={{ color: 'var(--text-muted)' }}>
-          Monthly comparison over the last 6 months
-        </p>
-        <GrowthBarChart
-          data={growthData}
-          key1="followers" key2="reach"
-          color1="var(--primary)" color2="var(--secondary)"
-          label1="Followers" label2="Reach"
-        />
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-2xl" style={{ border: '1px solid var(--border)' }}>
-        <div className="grid grid-cols-4 gap-4 px-5 py-3 text-[10px] font-semibold uppercase tracking-wider"
+        <div className="grid grid-cols-3 gap-4 px-5 py-3 text-[10px] font-semibold uppercase tracking-wider"
           style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
-          <div>Month</div>
+          <div>Recorded At</div>
           <div className="text-right">Followers</div>
-          <div className="text-right">Reach</div>
           <div className="text-right">Posts</div>
         </div>
-        {[...growthData].reverse().map((row, i) => {
-          const prevRow = growthData[growthData.length - 2 - i]
-          const fg = prevRow ? (((row.followers - prevRow.followers) / prevRow.followers) * 100).toFixed(1) : null
-          return (
-            <div key={row.month}
-              className="grid grid-cols-4 items-center gap-4 px-5 py-3.5 transition-all hover:bg-[var(--bg-hover)]"
-              style={{
-                backgroundColor: 'var(--bg-card)',
-                borderBottom: i < growthData.length - 1 ? '1px solid var(--border)' : 'none',
-              }}>
-              <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>{row.month}</div>
-              <div className="text-right">
-                <span className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
-                  {fmt(row.followers)}
-                </span>
-                {fg && <span className="ml-2 text-xs" style={{ color: 'var(--success)' }}>+{fg}%</span>}
-              </div>
-              <div className="text-right text-sm" style={{ color: 'var(--text)' }}>{fmt(row.reach)}</div>
-              <div className="text-right text-sm" style={{ color: 'var(--text)' }}>{row.posts}</div>
+        {accountMetrics.slice(0, 10).map((row, i) => (
+          <div key={i} className="grid grid-cols-3 items-center gap-4 px-5 py-3.5 transition-all hover:bg-[var(--bg-hover)]"
+            style={{ backgroundColor: 'var(--bg-card)', borderBottom: i < Math.min(accountMetrics.length, 10) - 1 ? '1px solid var(--border)' : 'none' }}>
+            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              {new Date(row.recorded_at).toLocaleDateString()}
             </div>
-          )
-        })}
+            <div className="text-right text-sm font-semibold" style={{ color: 'var(--text)' }}>
+              {fmt(row.follower_count)}
+            </div>
+            <div className="text-right text-sm" style={{ color: 'var(--text)' }}>{row.total_posts}</div>
+          </div>
+        ))}
       </div>
     </div>
   )
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── AudienceTab ─────────────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'top-posts' | 'growth'
+const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function AudienceTab({ demographics, postingTimes }: {
+  demographics: Demographics | null
+  postingTimes: PostingTime[]
+}) {
+  const noData = !demographics && !postingTimes.length
+
+  if (noData) return (
+    <div className="flex flex-col items-center justify-center rounded-2xl py-20"
+      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+      <Users size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+      <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No audience data yet</p>
+      <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Sync your analytics to see audience insights.</p>
+    </div>
+  )
+
+  const maxDemo = (arr: DemographicRow[]) => Math.max(...arr.map(r => r.value), 1)
+
+  return (
+    <div className="space-y-6">
+      {/* Best posting times heatmap */}
+      {postingTimes.length > 0 && (
+        <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <h3 className="mb-1 text-sm font-semibold" style={{ color: 'var(--text)' }}>Best Posting Times</h3>
+          <p className="mb-4 text-xs" style={{ color: 'var(--text-muted)' }}>Hours with highest avg. engagement from your posts</p>
+          <div className="space-y-2">
+            {postingTimes.slice(0, 5).map((t, i) => (
+              <div key={i} className="flex items-center gap-3">
+                <span className="w-20 text-xs" style={{ color: 'var(--text-muted)' }}>
+                  {DAYS_SHORT[t.day_of_week]} {t.hour}:00
+                </span>
+                <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                  <div className="h-full rounded-full" style={{
+                    width: `${(t.avg_engagement / (postingTimes[0]?.avg_engagement || 1)) * 100}%`,
+                    backgroundColor: 'var(--primary)',
+                  }} />
+                </div>
+                <span className="w-12 text-right text-xs font-semibold" style={{ color: 'var(--success)' }}>
+                  {t.avg_engagement}%
+                </span>
+                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                  {t.post_count} post{t.post_count > 1 ? 's' : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Demographics */}
+      {demographics && (
+        <div className="grid grid-cols-2 gap-4">
+          {/* Top countries */}
+          {demographics.countries.length > 0 && (
+            <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+              <h3 className="mb-4 text-sm font-semibold" style={{ color: 'var(--text)' }}>Top Countries</h3>
+              <div className="space-y-2">
+                {demographics.countries.slice(0, 6).map((c, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="w-24 truncate text-xs" style={{ color: 'var(--text)' }}>{c.label}</span>
+                    <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                      <div className="h-full rounded-full" style={{
+                        width: `${(c.value / maxDemo(demographics.countries)) * 100}%`,
+                        backgroundColor: 'var(--secondary)',
+                      }} />
+                    </div>
+                    <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{fmt(c.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Top cities */}
+          {demographics.cities.length > 0 && (
+            <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+              <h3 className="mb-4 text-sm font-semibold" style={{ color: 'var(--text)' }}>Top Cities</h3>
+              <div className="space-y-2">
+                {demographics.cities.slice(0, 6).map((c, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="w-24 truncate text-xs" style={{ color: 'var(--text)' }}>{c.label}</span>
+                    <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                      <div className="h-full rounded-full" style={{
+                        width: `${(c.value / maxDemo(demographics.cities)) * 100}%`,
+                        backgroundColor: '#A84FFF',
+                      }} />
+                    </div>
+                    <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{fmt(c.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Gender/Age */}
+          {demographics.genderAge.length > 0 && (
+            <div className="col-span-2 rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+              <h3 className="mb-4 text-sm font-semibold" style={{ color: 'var(--text)' }}>Age & Gender</h3>
+              <div className="grid grid-cols-2 gap-3">
+                {demographics.genderAge.map((g, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="w-20 text-xs" style={{ color: 'var(--text)' }}>{g.label}</span>
+                    <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                      <div className="h-full rounded-full" style={{
+                        width: `${(g.value / maxDemo(demographics.genderAge)) * 100}%`,
+                        backgroundColor: g.label.startsWith('M') ? 'var(--secondary)' : '#E4405F',
+                      }} />
+                    </div>
+                    <span className="text-xs font-semibold" style={{ color: 'var(--text-muted)' }}>{fmt(g.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {(!demographics?.countries.length && !demographics?.cities.length && !demographics?.genderAge.length) && (
+        <div className="rounded-2xl p-5 text-center" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            Audience demographics require a Business account with sufficient followers.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── HashtagsTab ──────────────────────────────────────────────────────────────
+
+function HashtagsTab({ hashtags }: { hashtags: HashtagStat[] }) {
+  if (!hashtags.length) return (
+    <div className="flex flex-col items-center justify-center rounded-2xl py-20"
+      style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+      <BarChart2 size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+      <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No hashtag data yet</p>
+      <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Sync your analytics to see hashtag performance.</p>
+    </div>
+  )
+
+  const maxEng = Math.max(...hashtags.map(h => h.avg_engagement), 1)
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        <h3 className="mb-1 text-sm font-semibold" style={{ color: 'var(--text)' }}>Hashtag Performance</h3>
+        <p className="mb-5 text-xs" style={{ color: 'var(--text-muted)' }}>
+          Hashtags ranked by average engagement rate across your posts
+        </p>
+        <div className="space-y-3">
+          {hashtags.map((h, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <span className="w-6 text-center text-xs font-bold" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>
+              <span className="w-40 truncate text-sm font-medium" style={{ color: 'var(--primary)' }}>{h.hashtag}</span>
+              <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-hover)' }}>
+                <div className="h-full rounded-full transition-all duration-700" style={{
+                  width: `${(h.avg_engagement / maxEng) * 100}%`,
+                  backgroundColor: h.avg_engagement >= 10 ? 'var(--success)' : h.avg_engagement >= 5 ? 'var(--warning)' : 'var(--primary)',
+                }} />
+              </div>
+              <span className="w-12 text-right text-sm font-bold" style={{
+                color: h.avg_engagement >= 10 ? 'var(--success)' : h.avg_engagement >= 5 ? 'var(--warning)' : 'var(--text-muted)',
+              }}>{h.avg_engagement}%</span>
+              <span className="w-16 text-right text-xs" style={{ color: 'var(--text-muted)' }}>{fmt(h.total_likes)} likes</span>
+              <span className="w-14 text-right text-xs" style={{ color: 'var(--text-muted)' }}>{h.post_count} post{h.post_count > 1 ? 's' : ''}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function AnalyticsPage() {
-  const navigate = useNavigate()
+  const navigate     = useNavigate()
   const { pathname } = useLocation()
-  const [range, setRange] = useState<DateRange>('30d')
+  const [range, setRange]                   = useState<DateRange>('30d')
+  const [syncing, setSyncing]               = useState(false)
+  const [syncError, setSyncError]           = useState<string | null>(null)
+  const [overview, setOverview]             = useState<OverviewData | null>(null)
+  const [topPosts, setTopPosts]             = useState<TopPost[]>([])
+  const [trend, setTrend]                   = useState<TrendPoint[]>([])
+  const [accountMetrics, setAccountMetrics] = useState<AccountMetric[]>([])
+  const [postingTimes, setPostingTimes]     = useState<PostingTime[]>([])
+  const [hashtags, setHashtags]             = useState<HashtagStat[]>([])
+  const [demographics, setDemographics]     = useState<Demographics | null>(null)
+
+  // Connected accounts + selected account
+  const [accounts, setAccounts]             = useState<ConnectedAccount[]>([])
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
 
   const activeTab: Tab = pathname.includes('top-posts')
     ? 'top-posts'
     : pathname.includes('growth')
       ? 'growth'
-      : 'overview'
+      : pathname.includes('audience')
+        ? 'audience'
+        : pathname.includes('hashtags')
+          ? 'hashtags'
+          : 'overview'
 
-  const tabs: { id: Tab; label: string; href: string }[] = [
-    { id: 'overview',  label: 'Overview',  href: '/analytics' },
-    { id: 'top-posts', label: 'Top Posts', href: '/analytics/top-posts' },
-    { id: 'growth',    label: 'Growth',    href: '/analytics/growth' },
+  const tabs = [
+    { id: 'overview'  as Tab, label: 'Overview',  href: '/analytics' },
+    { id: 'top-posts' as Tab, label: 'Top Posts', href: '/analytics/top-posts' },
+    { id: 'growth'    as Tab, label: 'Growth',    href: '/analytics/growth' },
+    { id: 'audience'  as Tab, label: 'Audience',  href: '/analytics/audience' },
+    { id: 'hashtags'  as Tab, label: 'Hashtags',  href: '/analytics/hashtags' },
   ]
+
+  // Load connected accounts on mount
+  useEffect(() => {
+    ipc.invoke('integration:list', WORKSPACE_ID).then(rows => {
+      const accs = (rows as ConnectedAccount[]) ?? []
+      setAccounts(accs)
+      if (accs.length > 0 && !selectedAccountId) {
+        setSelectedAccountId(accs[0].id)
+        loadData(accs[0].id)
+      }
+    }).catch(console.error)
+  }, [])
+
+  const loadData = useCallback(async (accountId?: string | null) => {
+    try {
+      const id = accountId ?? selectedAccountId
+      const [ov, tp, tr, am, pt, ht, dm] = await Promise.all([
+        ipc.invoke('analytics:overview',        WORKSPACE_ID, id),
+        ipc.invoke('analytics:top-posts',       WORKSPACE_ID, 20, id),
+        ipc.invoke('analytics:trend',           WORKSPACE_ID, id),
+        ipc.invoke('analytics:account-metrics', WORKSPACE_ID, id),
+        ipc.invoke('analytics:posting-times',   WORKSPACE_ID, id),
+        ipc.invoke('analytics:hashtags',        WORKSPACE_ID, id),
+        ipc.invoke('analytics:demographics',    WORKSPACE_ID, id),
+      ])
+      if (ov)  setOverview(ov as OverviewData)
+      if (tp)  setTopPosts(tp as TopPost[])
+      if (tr)  setTrend((tr as TrendPoint[]).filter(d => d.date != null))
+      if (am)  setAccountMetrics(am as AccountMetric[])
+      if (pt)  setPostingTimes(pt as PostingTime[])
+      if (ht)  setHashtags(ht as HashtagStat[])
+      if (dm)  setDemographics(dm as Demographics)
+    } catch (e) {
+      console.error('Failed to load analytics:', e)
+    }
+  }, [selectedAccountId])
+
+  useEffect(() => {
+    if (selectedAccountId) loadData()
+  }, [selectedAccountId])
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setSyncError(null)
+    try {
+      const results = await ipc.invoke('analytics:sync', WORKSPACE_ID)
+      console.log('[Analytics] Sync results:', results)
+      await loadData()
+    } catch (e: any) {
+      setSyncError(e.message ?? 'Sync failed')
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 animate-fade-in">
@@ -661,10 +682,41 @@ export default function AnalyticsPage() {
             <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Analytics</h1>
           </div>
           <p className="mt-1 text-sm" style={{ color: 'var(--text-muted)' }}>
-            Track performance across all your connected platforms.
+            Real data from your connected social accounts.
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Platform / account selector */}
+          {accounts.length > 0 && (
+            <div className="flex gap-1 rounded-xl p-1"
+              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+              {accounts.map(acc => {
+                const color = PLATFORM_COLORS[acc.platform] ?? '#888'
+                const selected = selectedAccountId === acc.id
+                return (
+                  <button
+                    key={acc.id}
+                    onClick={() => { setSelectedAccountId(acc.id); loadData(acc.id) }}
+                    title={`${PLATFORM_LABELS[acc.platform]} — @${acc.platform_username}`}
+                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
+                    style={{
+                      backgroundColor: selected ? `${color}22` : 'transparent',
+                      color: selected ? color : 'var(--text-muted)',
+                      border: selected ? `1px solid ${color}` : '1px solid transparent',
+                    }}
+                  >
+                    <PlatformIcon platform={acc.platform} size={13} />
+                    @{acc.platform_username}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {accounts.length === 0 && (
+            <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              No accounts connected
+            </span>
+          )}
           <div className="flex gap-1 rounded-xl p-1"
             style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
             {(['7d', '30d', '90d'] as DateRange[]).map(r => (
@@ -678,14 +730,25 @@ export default function AnalyticsPage() {
               </button>
             ))}
           </div>
-          <button
-            className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium transition-all hover:opacity-80"
-            style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
-            <RefreshCw size={13} />
-            Sync
+          <button onClick={handleSync} disabled={syncing}
+            className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition-all hover:opacity-90 disabled:opacity-60 glow-primary"
+            style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}>
+            {syncing
+              ? <Loader2 size={13} className="animate-spin" />
+              : <RefreshCw size={13} />}
+            {syncing ? 'Syncing...' : 'Sync'}
           </button>
         </div>
       </div>
+
+      {/* Error */}
+      {syncError && (
+        <div className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm"
+          style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--danger)' }}>
+          <AlertCircle size={15} />
+          {syncError}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl p-1"
@@ -703,9 +766,11 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Content */}
-      {activeTab === 'overview'  && <OverviewTab range={range} />}
-      {activeTab === 'top-posts' && <TopPostsTab />}
-      {activeTab === 'growth'    && <GrowthTab />}
+      {activeTab === 'overview'  && <OverviewTab overview={overview} trend={trend} syncing={syncing} />}
+      {activeTab === 'top-posts' && <TopPostsTab posts={topPosts} />}
+      {activeTab === 'growth'    && <GrowthTab accountMetrics={accountMetrics} />}
+      {activeTab === 'audience'  && <AudienceTab demographics={demographics} postingTimes={postingTimes} />}
+      {activeTab === 'hashtags'  && <HashtagsTab hashtags={hashtags} />}
     </div>
   )
 }

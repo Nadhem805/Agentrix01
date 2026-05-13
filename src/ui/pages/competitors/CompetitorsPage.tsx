@@ -296,9 +296,9 @@ function CompetitorCard({
   const { label, color, Icon } = platformConfig[competitor.platform]
 
   return (
-    <button
+    <div
       onClick={onClick}
-      className="w-full rounded-2xl p-4 text-left transition-all hover:scale-[1.01]"
+      className="w-full cursor-pointer rounded-2xl p-4 text-left transition-all hover:scale-[1.01]"
       style={{
         backgroundColor: selected ? 'rgba(108,59,255,0.10)' : 'var(--bg-card)',
         border: `1px solid ${selected ? 'var(--primary)' : 'var(--border)'}`,
@@ -382,7 +382,7 @@ function CompetitorCard({
           </button>
         </div>
       </div>
-    </button>
+    </div>
   )
 }
 

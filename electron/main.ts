@@ -1,6 +1,16 @@
 import { app, BrowserWindow } from 'electron'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { createRequire } from 'node:module'
+import { initDatabase, closeDatabase } from './services/database'
+import { registerAllIpcHandlers } from './ipc/index'
+import { registerOAuthProtocolHandler } from './services/instagramOAuth'
+
+// Load .env into process.env
+const require = createRequire(import.meta.url)
+require('dotenv').config()
+
+// Register custom protocol before app is ready — removed, using manual fallback instead
 
 // ESM-compatible __dirname — use createRequire(import.meta.url) if you need require()
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -65,4 +75,14 @@ app.on('activate', () => {
   }
 })
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  registerOAuthProtocolHandler()
+  initDatabase()
+  registerAllIpcHandlers()
+  createWindow()
+})
+
+// Close DB cleanly on quit
+app.on('will-quit', () => {
+  closeDatabase()
+})

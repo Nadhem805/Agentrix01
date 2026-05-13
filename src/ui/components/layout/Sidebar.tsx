@@ -81,6 +81,8 @@ const navItems: NavItem[] = [
       { title: 'Overview',  href: '/analytics' },
       { title: 'Top Posts', href: '/analytics/top-posts' },
       { title: 'Growth',    href: '/analytics/growth' },
+      { title: 'Audience',  href: '/analytics/audience' },
+      { title: 'Hashtags',  href: '/analytics/hashtags' },
     ],
   },
   {
