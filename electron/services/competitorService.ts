@@ -554,6 +554,90 @@ async function scrapeTikTokProfileMeta(username: string): Promise<TikTokProfileM
   return { displayName, avatarUrl, followerCount }
 }
 
+// ─── Twitter Profile Scraper ─────────────────────────────────────────────────────
+
+interface TwitterProfileMeta {
+  displayName: string
+  avatarUrl?: string
+  followerCount: number
+}
+
+/**
+ * Scrape a Twitter/X profile's public page to extract display name,
+ * avatar URL, and follower count from the embedded JS state.
+ * No credentials required.
+ */
+async function scrapeTwitterProfileMeta(username: string): Promise<TwitterProfileMeta> {
+  const url = `https://twitter.com/${username}`
+
+  console.log(`[Twitter] Fetching profile page: ${url}`)
+
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  })
+
+  if (!response.ok) {
+    if (response.status === 404) throw new Error('NOT_FOUND')
+    throw new Error(`Twitter page returned HTTP ${response.status}`)
+  }
+
+  const html = await response.text()
+
+  // Twitter embeds the profile state as minified JS object:
+  // followers:240312850,isUnavailable:!1,name:"Elon Musk",profileStatus:"Available"
+  // If isUnavailable is true (!0) or the followers key is absent, the account doesn't exist
+  const isUnavailableMatch = html.match(/isUnavailable:(!0|!1|true|false)/i)
+  if (isUnavailableMatch && (isUnavailableMatch[1] === '!0' || isUnavailableMatch[1] === 'true')) {
+    console.log(`[Twitter] Account marked as unavailable`)
+    throw new Error('NOT_FOUND')
+  }
+
+  const followersMatch = html.match(/followers:(\d+)/i)
+  if (!followersMatch) {
+    console.log(`[Twitter] No followers field found — account likely doesn't exist`)
+    throw new Error('NOT_FOUND')
+  }
+  const followerCount = parseInt(followersMatch[1], 10)
+
+  // ── Extract display name ──────────────────────────────────────────────────
+  let displayName = formatDisplayName(username)
+  // Twitter embeds: name:"Elon Musk"
+  const nameMatch = html.match(/,name:"([^"]+)"/)
+  if (nameMatch) {
+    displayName = nameMatch[1]
+  } else {
+    // Fallback to og:title — format: "Elon Musk (@elonmusk) on X"
+    const ogTitleMatch = html.match(/<meta property="og:title" content="([^"]+)"/)
+    if (ogTitleMatch) {
+      const rawTitle = ogTitleMatch[1].trim()
+      const parsedNameMatch = rawTitle.match(/^([^(]+)\s+\(@/)
+      if (parsedNameMatch) {
+        displayName = parsedNameMatch[1].trim()
+      } else {
+        displayName = rawTitle.replace(/\s+on X$/i, '').trim()
+      }
+    }
+  }
+
+  // ── Extract avatar URL ────────────────────────────────────────────────────
+  let avatarUrl: string | undefined
+  // Twitter embeds profile images in og:image as pbs.twimg.com URLs
+  const ogImageMatch = html.match(/<meta property="og:image" content="([^"]+)"/)
+  if (ogImageMatch) {
+    // Upgrade from _200x200 to _400x400 for better resolution
+    avatarUrl = ogImageMatch[1].replace(/_200x200/, '_400x400')
+  }
+
+  console.log(`[Twitter] Resolved: displayName=${displayName}, followers=${followerCount}`)
+
+  return { displayName, avatarUrl, followerCount }
+}
+
 // ─── Service Implementation ────────────────────────────────────────────────────
 
 class CompetitorServiceImpl {
@@ -648,6 +732,25 @@ class CompetitorServiceImpl {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `).run(id, workspaceId, platform, cleanUsername, displayName, avatarUrl, followerCount, now)
       }
+    } else if (platform === 'twitter') {
+      try {
+        const meta = await scrapeTwitterProfileMeta(cleanUsername)
+        followerCount = meta.followerCount
+        displayName = meta.displayName
+        avatarUrl = meta.avatarUrl || `https://unavatar.io/twitter/${cleanUsername}`
+        db.prepare(`
+          INSERT INTO competitors (id, workspace_id, platform, platform_username, display_name, avatar_url, follower_count, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, workspaceId, platform, cleanUsername, displayName, avatarUrl, followerCount, now)
+      } catch (e: any) {
+        if (e.message === 'NOT_FOUND') throw new Error('Competitor not found')
+        console.warn(`[Twitter] Metadata fetch failed, using fallback: ${e.message}`)
+        avatarUrl = `https://unavatar.io/twitter/${cleanUsername}`
+        db.prepare(`
+          INSERT INTO competitors (id, workspace_id, platform, platform_username, display_name, avatar_url, follower_count, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, workspaceId, platform, cleanUsername, displayName, avatarUrl, followerCount, now)
+      }
     } else {
       avatarUrl = `https://unavatar.io/${platform}/${cleanUsername}`
       db.prepare(`
@@ -702,6 +805,13 @@ class CompetitorServiceImpl {
     // Try real TikTok profile sync for TikTok competitors
     if (competitor.platform === 'tiktok') {
       const success = await this.syncTikTokFromScrape(competitorId, competitor)
+      if (success) return
+      // Fall through to mock generation if scrape fails
+    }
+
+    // Try real Twitter profile sync for Twitter competitors
+    if (competitor.platform === 'twitter') {
+      const success = await this.syncTwitterFromScrape(competitorId, competitor)
       if (success) return
       // Fall through to mock generation if scrape fails
     }
@@ -1017,6 +1127,84 @@ class CompetitorServiceImpl {
       return true
     } catch (e: any) {
       console.error(`[TikTok] Profile sync failed: ${e.message}. Falling back to mock generator.`)
+      return false
+    }
+  }
+
+  /**
+   * Sync Twitter competitor by re-scraping profile metadata.
+   * Since individual post data isn't accessible without auth, this refreshes
+   * follower count and generates realistic mock posts seeded from real data.
+   * Returns true if successful, false if we should fall back to mock.
+   */
+  private async syncTwitterFromScrape(competitorId: string, competitor: any): Promise<boolean> {
+    const db = getDatabase()
+
+    try {
+      // 1. Re-scrape profile to refresh follower count and metadata
+      const meta = await scrapeTwitterProfileMeta(competitor.platform_username)
+
+      db.prepare(`
+        UPDATE competitors 
+        SET display_name = ?, avatar_url = ?, follower_count = ?, last_synced_at = ?
+        WHERE id = ?
+      `).run(
+        meta.displayName,
+        meta.avatarUrl || `https://unavatar.io/twitter/${competitor.platform_username}`,
+        meta.followerCount,
+        'Just now',
+        competitorId
+      )
+
+      // 2. Generate realistic mock posts seeded from real follower count
+      const now = new Date()
+      const nowStr = now.toISOString()
+
+      db.prepare('DELETE FROM competitor_posts WHERE competitor_id = ?').run(competitorId)
+
+      const templates = this.getPlatformTemplates(competitor.platform, competitor.platform_username)
+
+      for (let i = 0; i < templates.length; i++) {
+        const template = templates[i]
+        const postId = crypto.randomUUID()
+
+        const postedDate = new Date()
+        postedDate.setDate(now.getDate() - (i * 2 + 1))
+        const postedStr = postedDate.toISOString().slice(0, 10) + ' ' + postedDate.toTimeString().slice(0, 8)
+
+        const baseEngagement = template.baseEngagementRate || (1 + Math.random() * 4)
+        const totalEngagements = Math.floor((meta.followerCount * baseEngagement) / 100)
+
+        const likes = Math.floor(totalEngagements * 0.82)
+        const comments = Math.floor(totalEngagements * 0.08)
+        const shares = Math.floor(totalEngagements * 0.10)
+
+        db.prepare(`
+          INSERT INTO competitor_posts (
+            id, competitor_id, platform_post_id, caption, hashtags, media_type,
+            likes, comments, shares, views, engagement_rate, posted_at, fetched_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          postId,
+          competitorId,
+          `post_${1000 + i}`,
+          template.caption,
+          JSON.stringify(template.hashtags),
+          template.mediaType,
+          likes,
+          comments,
+          shares,
+          null,
+          parseFloat(baseEngagement.toFixed(1)),
+          postedStr,
+          nowStr
+        )
+      }
+
+      console.log(`[Twitter] Synced profile metadata for competitor ${competitorId}`)
+      return true
+    } catch (e: any) {
+      console.error(`[Twitter] Profile sync failed: ${e.message}. Falling back to mock generator.`)
       return false
     }
   }
