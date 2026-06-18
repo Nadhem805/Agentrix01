@@ -1,6 +1,9 @@
+// stores/competitorStore.ts
+
 import { create } from 'zustand'
 import type { Competitor, CompetitorPost } from '@/types/competitor'
 import type { SocialPlatform } from '@/types/post'
+import { competitorIpc } from '../services/ipcClient'
 
 interface CompetitorStore {
   competitors: Competitor[]
@@ -14,40 +17,97 @@ interface CompetitorStore {
   getCompetitorPosts: (competitorId: string) => Promise<void>
 }
 
-export const useCompetitorStore = create<CompetitorStore>((set) => ({
+export const useCompetitorStore = create<CompetitorStore>((set, get) => ({
   competitors: [],
   competitorPosts: {},
   isLoading: false,
   isSyncing: null,
 
-  fetchCompetitors: async (_workspaceId: string) => {
+  fetchCompetitors: async (workspaceId: string) => {
     set({ isLoading: true })
     try {
-      // TODO: ipc.invoke('competitor:list', {workspaceId})
+      const list = await competitorIpc.list(workspaceId) as Competitor[]
+      set({ competitors: list })
+    } catch (e) {
+      console.error('Failed to fetch competitors:', e)
     } finally {
       set({ isLoading: false })
     }
   },
 
-  addCompetitor: async (_workspaceId: string, _platform: SocialPlatform, _username: string) => {
-    // TODO: ipc.invoke('competitor:add', {workspaceId, platform, username})
-    throw new Error('Not implemented')
+  addCompetitor: async (workspaceId: string, platform: SocialPlatform, username: string) => {
+    set({ isLoading: true })
+    try {
+      const created = await competitorIpc.add(workspaceId, platform, username) as Competitor
+      set((state) => ({
+        competitors: [created, ...state.competitors.filter((c) => c.id !== created.id)],
+      }))
+      return created
+    } catch (e) {
+      console.error('Failed to add competitor:', e)
+      throw e
+    } finally {
+      set({ isLoading: false })
+    }
   },
 
-  removeCompetitor: async (_id: string) => {
-    // TODO: ipc.invoke('competitor:remove', {id})
+  removeCompetitor: async (id: string) => {
+    set({ isLoading: true })
+    try {
+      await competitorIpc.remove(id)
+      set((state) => ({
+        competitors: state.competitors.filter((c) => c.id !== id),
+      }))
+      
+      const newPosts = { ...get().competitorPosts }
+      delete newPosts[id]
+      set({ competitorPosts: newPosts })
+    } catch (e) {
+      console.error('Failed to remove competitor:', e)
+    } finally {
+      set({ isLoading: false })
+    }
   },
 
   syncCompetitor: async (id: string) => {
     set({ isSyncing: id })
     try {
-      // TODO: ipc.invoke('competitor:sync', {id})
+      await competitorIpc.sync(id)
+      
+      // Fetch latest posts for this competitor
+      const posts = await competitorIpc.posts(id) as CompetitorPost[]
+      set((state) => ({
+        competitorPosts: {
+          ...state.competitorPosts,
+          [id]: posts,
+        },
+      }))
+
+      // Refresh competitors list to update metrics and lastSyncedAt
+      const competitor = get().competitors.find(c => c.id === id)
+      if (competitor) {
+        const list = await competitorIpc.list(competitor.workspaceId) as Competitor[]
+        set({ competitors: list })
+      }
+    } catch (e) {
+      console.error('Failed to sync competitor:', e)
+      throw e
     } finally {
       set({ isSyncing: null })
     }
   },
 
-  getCompetitorPosts: async (_competitorId: string) => {
-    // TODO: ipc.invoke('competitor:posts', {competitorId})
+  getCompetitorPosts: async (competitorId: string) => {
+    try {
+      const posts = await competitorIpc.posts(competitorId) as CompetitorPost[]
+      set((state) => ({
+        competitorPosts: {
+          ...state.competitorPosts,
+          [competitorId]: posts,
+        },
+      }))
+    } catch (e) {
+      console.error('Failed to get competitor posts:', e)
+    }
   },
 }))

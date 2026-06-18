@@ -1,5 +1,8 @@
+// stores/profileStore.ts
+
 import { create } from 'zustand'
 import type { Profile, Workspace, CreateProfileData, CreateWorkspaceData } from '@/types/profile'
+import { profileIpc } from '../services/ipcClient'
 
 interface ProfileStore {
   profile: Profile | null
@@ -7,9 +10,10 @@ interface ProfileStore {
   activeWorkspace: Workspace | null
   isLoading: boolean
   checkProfile: () => Promise<boolean>
-  createProfile: (data: CreateProfileData) => Promise<Profile>
+  createProfile: (data: CreateProfileData & { defaultWorkspaceName?: string }) => Promise<Profile>
+  updateProfile: (id: string, data: Partial<CreateProfileData>) => Promise<Profile>
   fetchWorkspaces: () => Promise<void>
-  setActiveWorkspace: (id: string) => void
+  setActiveWorkspace: (id: string) => Promise<void>
   createWorkspace: (data: CreateWorkspaceData) => Promise<Workspace>
 }
 
@@ -20,32 +24,107 @@ export const useProfileStore = create<ProfileStore>((set, get) => ({
   isLoading: false,
 
   checkProfile: async () => {
-    // TODO: ipc.invoke('profile:check') in Phase 2
-    return false
-  },
-
-  createProfile: async (_data: CreateProfileData) => {
-    // TODO: ipc.invoke('profile:create', data) in Phase 2
-    throw new Error('Not implemented')
-  },
-
-  fetchWorkspaces: async () => {
     set({ isLoading: true })
     try {
-      // TODO: ipc.invoke('workspace:list') in Phase 2
+      const active = await profileIpc.getActive() as Profile | null
+      const activeWs = await profileIpc.getActiveWorkspace() as Workspace | null
+      if (active) {
+        set({ profile: active, activeWorkspace: activeWs })
+        // Fetch workspaces immediately for this profile
+        const wsList = await profileIpc.listWorkspaces(active.id) as Workspace[]
+        set({ workspaces: wsList })
+        return true
+      }
+      return false
+    } catch (e) {
+      console.error('Failed to check active profile:', e)
+      return false
     } finally {
       set({ isLoading: false })
     }
   },
 
-  setActiveWorkspace: (id) => {
-    const workspace = get().workspaces.find((w) => w.id === id) ?? null
-    set({ activeWorkspace: workspace })
-    // TODO: persist to electron-store
+  createProfile: async (data: CreateProfileData & { defaultWorkspaceName?: string }) => {
+    set({ isLoading: true })
+    try {
+      const created = await profileIpc.create(data) as Profile
+      set({ profile: created })
+      
+      // Auto-load profile & active workspace
+      const activeWs = await profileIpc.getActiveWorkspace() as Workspace | null
+      set({ activeWorkspace: activeWs })
+
+      const wsList = await profileIpc.listWorkspaces(created.id) as Workspace[]
+      set({ workspaces: wsList })
+
+      return created
+    } catch (error) {
+      console.error('Failed to create profile:', error)
+      throw error
+    } finally {
+      set({ isLoading: false })
+    }
   },
 
-  createWorkspace: async (_data: CreateWorkspaceData) => {
-    // TODO: ipc.invoke('workspace:create', data) in Phase 2
-    throw new Error('Not implemented')
+  updateProfile: async (id: string, data: Partial<CreateProfileData>) => {
+    set({ isLoading: true })
+    try {
+      const updated = await profileIpc.update(id, data) as Profile
+      set({ profile: updated })
+      return updated
+    } catch (error) {
+      console.error('Failed to update profile:', error)
+      throw error
+    } finally {
+      set({ isLoading: false })
+    }
+  },
+
+  fetchWorkspaces: async () => {
+    const prof = get().profile
+    if (!prof) return
+    set({ isLoading: true })
+    try {
+      const wsList = await profileIpc.listWorkspaces(prof.id) as Workspace[]
+      set({ workspaces: wsList })
+    } catch (error) {
+      console.error('Failed to fetch workspaces:', error)
+    } finally {
+      set({ isLoading: false })
+    }
+  },
+
+  setActiveWorkspace: async (id: string) => {
+    set({ isLoading: true })
+    try {
+      await profileIpc.switchWorkspace(id)
+      const activeWs = await profileIpc.getActiveWorkspace() as Workspace | null
+      set({ activeWorkspace: activeWs })
+    } catch (error) {
+      console.error('Failed to set active workspace:', error)
+      throw error
+    } finally {
+      set({ isLoading: false })
+    }
+  },
+
+  createWorkspace: async (data: CreateWorkspaceData) => {
+    set({ isLoading: true })
+    try {
+      const created = await profileIpc.createWorkspace(data) as Workspace
+      set({ activeWorkspace: created })
+      
+      const profileId = get().profile?.id
+      if (profileId) {
+        const wsList = await profileIpc.listWorkspaces(profileId) as Workspace[]
+        set({ workspaces: wsList })
+      }
+      return created
+    } catch (error) {
+      console.error('Failed to create workspace:', error)
+      throw error
+    } finally {
+      set({ isLoading: false })
+    }
   },
 }))

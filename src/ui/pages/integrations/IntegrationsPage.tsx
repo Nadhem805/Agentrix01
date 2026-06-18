@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useProfileStore } from '@/stores/profileStore'
 import {
   Store,
   CheckCircle2,
@@ -56,6 +57,7 @@ interface SocialAccount {
   platformDisplayName: string
   avatarInitial: string
   avatarColor: string
+  avatarUrl?: string
   status: ConnectionStatus
   scopes: string[]
   connectedAt: string
@@ -156,12 +158,22 @@ function ConnectedAccountCard({ account, onDisconnect }: { account: SocialAccoun
         {/* Left: avatar + info */}
         <div className="flex items-center gap-3">
           <div className="relative">
-            <div
-              className="flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold text-white"
-              style={{ backgroundColor: account.avatarColor }}
-            >
-              {account.avatarInitial}
-            </div>
+            {account.avatarUrl ? (
+              <img
+                src={account.avatarUrl}
+                alt={account.platformDisplayName}
+                className="h-11 w-11 rounded-full object-cover"
+                referrerPolicy="no-referrer"
+                style={{ border: `1.5px solid ${color}` }}
+              />
+            ) : (
+              <div
+                className="flex h-11 w-11 items-center justify-center rounded-full text-sm font-bold text-white"
+                style={{ backgroundColor: account.avatarColor }}
+              >
+                {account.avatarInitial}
+              </div>
+            )}
             <div
               className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full"
               style={{ backgroundColor: color, color: '#fff' }}
@@ -341,12 +353,13 @@ const ipc: IpcBridge = (window as any).ipcRenderer ?? {
   off: () => {},
 }
 
-// Hardcoded workspace ID until profile system is wired up
-const WORKSPACE_ID = 'default-workspace'
+// WORKSPACE_ID replaced dynamically by useProfileStore activeWorkspace
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function IntegrationsPage() {
+  const { activeWorkspace } = useProfileStore()
+  const workspaceId = activeWorkspace?.id ?? 'default-workspace'
   const [activeTab, setActiveTab]         = useState<'connected' | 'available'>('connected')
   const [accounts, setAccounts]           = useState<SocialAccount[]>([])
   const [connecting, setConnecting]       = useState<SocialPlatform | null>(null)
@@ -357,7 +370,7 @@ export default function IntegrationsPage() {
   // Load connected accounts from DB on mount
   const loadAccounts = useCallback(async () => {
     try {
-      const rows = await ipc.invoke('integration:list', WORKSPACE_ID) as any[]
+      const rows = await ipc.invoke('integration:list', workspaceId) as any[]
       const mapped: SocialAccount[] = rows.map(r => ({
         id:                  r.id,
         platform:            r.platform as SocialPlatform,
@@ -365,16 +378,18 @@ export default function IntegrationsPage() {
         platformDisplayName: r.platform_display_name,
         avatarInitial:       (r.platform_display_name ?? r.platform_username ?? '?')[0].toUpperCase(),
         avatarColor:         platformConfig[r.platform as SocialPlatform]?.color ?? '#888',
+        avatarUrl:           r.avatar_url,
         status:              'active' as const,
         scopes:              r.scopes ?? [],
         connectedAt:         r.connected_at,
         lastSyncedAt:        r.last_synced_at,
+        tokenExpiresAt:      r.token_expires_at,
       }))
       setAccounts(mapped)
     } catch (err) {
       console.error('Failed to load accounts:', err)
     }
-  }, [])
+  }, [workspaceId])
 
   useEffect(() => {
     loadAccounts()
@@ -386,15 +401,42 @@ export default function IntegrationsPage() {
   }, [loadAccounts])
 
   const handleConnect = async (platform: SocialPlatform) => {
-    if (platform !== 'instagram') {
+    if (platform !== 'instagram' && platform !== 'tiktok' && platform !== 'youtube') {
       setConnectError(`${platform} integration coming soon.`)
       setTimeout(() => setConnectError(null), 3000)
       return
     }
+
+    if (platform === 'tiktok') {
+      setConnecting(null)
+      setConnectError(null)
+      try {
+        await ipc.invoke('integration:connect:tiktok', workspaceId)
+      } catch (err: any) {
+        setConnectError(err.message ?? 'Failed to open TikTok')
+        return
+      }
+      setShowCodeInput(true)
+      return
+    }
+
+    if (platform === 'youtube') {
+      setConnecting(null)
+      setConnectError(null)
+      try {
+        await ipc.invoke('integration:connect:youtube', workspaceId)
+      } catch (err: any) {
+        setConnectError(err.message ?? 'Failed to open YouTube')
+        return
+      }
+      setShowCodeInput(true)
+      return
+    }
+
+    // Instagram flow
     setConnectError(null)
-    // Open browser for OAuth, then immediately show code input
     try {
-      await ipc.invoke('integration:connect:instagram', WORKSPACE_ID)
+      await ipc.invoke('integration:connect:instagram', workspaceId)
     } catch (err: any) {
       setConnectError(err.message ?? 'Failed to open browser')
       return
@@ -406,25 +448,37 @@ export default function IntegrationsPage() {
     let code = codeInput.trim()
     if (!code) return
 
-    // If user pasted the full URL, extract just the code
+    // Detect platform from connecting state or URL content
+    const isTikTok = connecting === 'tiktok' || code.includes('tiktok') || code.includes('scopes=')
+    const isYouTube = connecting === 'youtube' || code.includes('youtube') || code.includes('google')
+
+    // Extract code from full URL if pasted
     if (code.includes('code=')) {
       try {
-        const urlObj = new URL(code.includes('://') ? code : 'https://localhost?' + code.split('?')[1])
+        const urlStr = code.includes('://') ? code : 'https://localhost?' + code.split('?')[1]
+        const urlObj = new URL(urlStr)
         code = urlObj.searchParams.get('code') ?? code
       } catch {
-        // try simple string extraction
         const match = code.match(/[?&]code=([^&#]+)/)
         if (match) code = match[1]
       }
     }
 
-    // Strip fragment
-    code = code.split('#')[0].trim()
+    // Strip fragment and decode
+    code = decodeURIComponent(code.split('#')[0].split('&')[0].trim())
 
-    setConnecting('instagram')
+    const platform = isTikTok ? 'tiktok' : isYouTube ? 'youtube' : 'instagram'
+    setConnecting(platform as SocialPlatform)
     setConnectError(null)
+
     try {
-      await ipc.invoke('integration:instagram:exchange-code', WORKSPACE_ID, code)
+      if (isTikTok) {
+        await ipc.invoke('integration:tiktok:exchange-code', workspaceId, code)
+      } else if (isYouTube) {
+        await ipc.invoke('integration:youtube:exchange-code', workspaceId, code)
+      } else {
+        await ipc.invoke('integration:instagram:exchange-code', workspaceId, code)
+      }
       await loadAccounts()
       setShowCodeInput(false)
       setCodeInput('')
@@ -498,30 +552,37 @@ export default function IntegrationsPage() {
               Paste the code from your browser
             </p>
             <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-              After approving on Instagram, your browser showed an error page. Copy the full URL from the address bar and paste it below — or just the code value.
+              After approving, your browser showed an error page. Copy the full URL from the address bar and paste it below.
             </p>
             <p className="mt-1 text-xs font-mono" style={{ color: 'var(--text-muted)' }}>
-              You can paste the full URL: <strong style={{ color: '#A084FF' }}>https://localhost/oauth/instagram?code=AQB...</strong>
+              Paste the full URL: <strong style={{ color: '#A084FF' }}>https://localhost:8765/oauth/tiktok?code=...</strong> or <strong style={{ color: '#A084FF' }}>https://localhost:8765/oauth/youtube?code=...</strong>
             </p>
           </div>
           <div className="flex gap-3">
             <input
               type="text"
               value={codeInput}
-              onChange={e => setCodeInput(e.target.value)}
-              placeholder="Paste the full code here..."
+              onChange={e => {
+                setCodeInput(e.target.value)
+                // Auto-submit for TikTok (codes expire in 10s) when full URL is pasted
+                if (e.target.value.includes('code=') && (e.target.value.includes('scopes=') || e.target.value.includes('tiktok'))) {
+                  setTimeout(() => document.getElementById('code-submit-btn')?.click(), 150)
+                }
+              }}
+              placeholder="Paste the full URL here..."
               className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none"
               style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text)' }}
               onFocus={e => (e.currentTarget.style.borderColor = 'var(--primary)')}
               onBlur={e => (e.currentTarget.style.borderColor = 'var(--border)')}
             />
             <button
+              id="code-submit-btn"
               onClick={handleSubmitCode}
-              disabled={!codeInput.trim() || connecting === 'instagram'}
+              disabled={!codeInput.trim() || !!connecting}
               className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90 disabled:opacity-40 glow-primary"
               style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
             >
-              {connecting === 'instagram' ? <Loader2 size={14} className="animate-spin" /> : null}
+              {connecting ? <Loader2 size={14} className="animate-spin" /> : null}
               Connect
             </button>
             <button

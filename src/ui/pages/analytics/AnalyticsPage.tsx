@@ -1,6 +1,6 @@
-
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useProfileStore } from '@/stores/profileStore'
 import {
   TrendingUp,
   BarChart2,
@@ -22,12 +22,11 @@ interface IpcBridge {
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>
 }
 const ipc: IpcBridge = (window as any).ipcRenderer ?? { invoke: async () => null }
-const WORKSPACE_ID = 'default-workspace'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type SocialPlatform = 'instagram' | 'tiktok' | 'twitter' | 'youtube' | 'linkedin'
-type DateRange = '7d' | '30d' | '90d'
+type DateRange = '7d' | '30d' | '90d' | 'all'
 type Tab = 'overview' | 'top-posts' | 'growth' | 'audience' | 'hashtags'
 
 interface ConnectedAccount {
@@ -35,6 +34,7 @@ interface ConnectedAccount {
   platform:             SocialPlatform
   platform_username:    string
   platform_display_name: string
+  avatar_url?:          string
   is_active:            number
 }
 
@@ -43,7 +43,12 @@ interface OverviewData {
   totalEngagements:  number
   avgEngagementRate: number
   followerCount:     number
+  followingCount:    number
   impressions:       number
+  tiktokLikes?:      number
+  instagramReach?:   number
+  youtubeLikes?:     number
+  youtubeComments?:  number
 }
 
 interface TopPost {
@@ -51,6 +56,7 @@ interface TopPost {
   caption:         string
   platform:        SocialPlatform
   permalink?:      string
+  thumbnail_url?:  string
   likes:           number
   comments:        number
   shares:          number
@@ -73,6 +79,7 @@ interface TrendPoint {
 
 interface AccountMetric {
   follower_count: number
+  following_count: number
   total_posts:    number
   recorded_at:    string
   platform:       string
@@ -104,13 +111,11 @@ interface Demographics {
 }
 
 const PLATFORM_COLORS: Record<SocialPlatform, string> = {
-  instagram: '#E4405F', tiktok: '#69C9D0', twitter: '#1DA1F2',
-  youtube: '#FF0000', linkedin: '#0A66C2',
-}
-
-const PLATFORM_LABELS: Record<SocialPlatform, string> = {
-  instagram: 'Instagram', tiktok: 'TikTok', twitter: 'Twitter/X',
-  youtube: 'YouTube', linkedin: 'LinkedIn',
+  instagram: '#E4405F', 
+  tiktok: '#69C9D0', 
+  twitter: '#1DA1F2',
+  youtube: '#FF0000', 
+  linkedin: '#0A66C2',
 }
 
 // Platform SVG icons (inline, no lucide dependency)
@@ -184,24 +189,56 @@ function TrendChart({ data }: { data: TrendPoint[] }) {
 
 // ─── OverviewTab ──────────────────────────────────────────────────────────────
 
-function OverviewTab({ overview, trend, syncing }: {
+function OverviewTab({ overview, trend, syncing, platform }: {
   overview: OverviewData | null
   trend:    TrendPoint[]
   syncing:  boolean
+  platform?: SocialPlatform
 }) {
   const stats = overview ? [
-    { label: 'Total Posts',       value: fmt(overview.totalPosts),         icon: BarChart2,  color: 'var(--primary)'   },
-    { label: 'Total Engagements', value: fmt(overview.totalEngagements),   icon: Heart,      color: '#E4405F'          },
-    { label: 'Avg. Engagement',   value: overview.avgEngagementRate + '%', icon: TrendingUp, color: 'var(--success)'   },
-    { label: 'Followers',         value: fmt(overview.followerCount),      icon: Users,      color: 'var(--secondary)' },
-    { label: 'Impressions',       value: fmt(overview.impressions),        icon: Eye,        color: '#A84FFF'          },
-    { label: 'Data Source',       value: 'Instagram',                      icon: Zap,        color: 'var(--warning)'   },
+    { label: platform === 'youtube' ? 'Total Videos' : 'Total Posts', value: fmt(overview.totalPosts), icon: BarChart2, color: 'var(--primary)' },
+    { label: 'Total Engagements', value: fmt(overview.totalEngagements), icon: Heart, color: '#E4405F' },
+    { label: 'Avg. Engagement', value: overview.avgEngagementRate + '%', icon: TrendingUp, color: 'var(--success)' },
+    { label: platform === 'youtube' ? 'Subscribers' : 'Followers', value: fmt(overview.followerCount), icon: Users, color: 'var(--secondary)' },
+    { label: platform === 'youtube' ? 'Total Views' : 'Impressions', value: fmt(overview.impressions), icon: Eye, color: '#A84FFF' },
   ] : []
+  
+  // Add platform-specific stats
+  if (platform === 'youtube' && overview) {
+    stats.push({ label: 'Total Likes', value: fmt(overview.youtubeLikes || 0), icon: Heart, color: '#FF0000' })
+    stats.push({ label: 'Comments', value: fmt(overview.youtubeComments || 0), icon: Users, color: '#A84FFF' })
+  }
+  
+  if (platform === 'tiktok' && overview?.tiktokLikes !== undefined) {
+    stats.push({ label: 'Total Likes', value: fmt(overview.tiktokLikes), icon: Heart, color: '#E4405F' })
+  }
+  
+  if (platform === 'instagram' && overview?.instagramReach !== undefined) {
+    stats.push({ label: 'Profile Reach', value: fmt(overview.instagramReach), icon: Users, color: '#A84FFF' })
+  }
+
+  if (!platform && overview) {
+    if (overview.instagramReach) {
+      stats.push({ label: 'Instagram Reach', value: fmt(overview.instagramReach), icon: Users, color: '#E4405F' })
+    }
+    if (overview.tiktokLikes) {
+      stats.push({ label: 'TikTok Likes', value: fmt(overview.tiktokLikes), icon: Heart, color: '#69C9D0' })
+    }
+    if (overview.youtubeLikes) {
+      stats.push({ label: 'YouTube Likes', value: fmt(overview.youtubeLikes), icon: Heart, color: '#FF0000' })
+    }
+  }
+
+  if (platform !== 'youtube') {
+    stats.push({ label: 'Following', value: fmt(overview?.followingCount || 0), icon: Users, color: 'var(--secondary)' })
+  }
+
+  stats.push({ label: 'Data Source', value: !platform ? 'All Channels' : platform === 'tiktok' ? 'TikTok' : platform === 'youtube' ? 'YouTube' : 'Instagram', icon: Zap, color: 'var(--warning)' })
 
   if (syncing) return (
     <div className="flex flex-col items-center justify-center py-20 gap-4">
       <Loader2 size={32} className="animate-spin" style={{ color: 'var(--primary)' }} />
-      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Syncing your Instagram analytics...</p>
+      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Syncing your {!platform ? 'social' : platform === 'tiktok' ? 'TikTok' : platform === 'youtube' ? 'YouTube' : 'Instagram'} analytics...</p>
     </div>
   )
 
@@ -211,7 +248,7 @@ function OverviewTab({ overview, trend, syncing }: {
       <BarChart2 size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
       <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No analytics data yet</p>
       <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
-        Click "Sync" to fetch your Instagram analytics.
+        Click "Sync" to fetch your {!platform ? 'social' : platform === 'tiktok' ? 'TikTok' : platform === 'youtube' ? 'YouTube' : 'Instagram'} analytics.
       </p>
     </div>
   )
@@ -233,7 +270,7 @@ function OverviewTab({ overview, trend, syncing }: {
             {i === 0 && (
               <div className="mt-2 flex items-center gap-1">
                 <ArrowUpRight size={13} style={{ color: 'var(--success)' }} />
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Live from Instagram</span>
+                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Live from {platform === 'tiktok' ? 'TikTok' : platform === 'youtube' ? 'YouTube' : 'Instagram'}</span>
               </div>
             )}
           </div>
@@ -281,7 +318,7 @@ function TopPostsTab({ posts }: { posts: TopPost[] }) {
               color: sortBy === key ? '#A084FF' : 'var(--text-muted)',
               border: `1px solid ${sortBy === key ? 'var(--primary)' : 'var(--border)'}`,
             }}>
-            {key === 'engagement_rate' ? 'Engagement' : key === 'likes' ? 'Likes' : 'Impressions'}
+            {key === 'engagement_rate' ? 'Engagement' : key === 'likes' ? 'Likes' : 'Views'}
           </button>
         ))}
       </div>
@@ -294,7 +331,7 @@ function TopPostsTab({ posts }: { posts: TopPost[] }) {
           <div className="col-span-1 text-right">Likes</div>
           <div className="col-span-1 text-right">Comments</div>
           <div className="col-span-1 text-right">Reach</div>
-          <div className="col-span-1 text-right">Impressions</div>
+          <div className="col-span-1 text-right">Views</div>
           <div className="col-span-2 text-right">Eng. Rate</div>
         </div>
         {sorted.map((post, i) => (
@@ -308,12 +345,21 @@ function TopPostsTab({ posts }: { posts: TopPost[] }) {
                 : <span className="text-sm font-bold" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>}
             </div>
             <div className="col-span-5 flex min-w-0 items-center gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold text-white"
-                style={{ backgroundColor: PLATFORM_COLORS[post.platform] ?? '#888' }}>
-                {post.platform.substring(0, 2).toUpperCase()}
-              </div>
+              {post.thumbnail_url ? (
+                <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-black">
+                  <img src={post.thumbnail_url} alt="" className="h-full w-full object-cover" />
+                  <div className="absolute right-1 top-1 flex h-3 w-3 items-center justify-center rounded-sm bg-black/60">
+                    <PlatformIcon platform={post.platform} size={8} />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white"
+                  style={{ backgroundColor: PLATFORM_COLORS[post.platform] ?? '#888' }}>
+                  {post.platform.substring(0, 2).toUpperCase()}
+                </div>
+              )}
               <div className="min-w-0">
-                <p className="truncate text-sm" style={{ color: 'var(--text)' }}>{post.caption || '(no caption)'}</p>
+                <p className="truncate text-sm" style={{ color: 'var(--text)' }}>{post.caption || '(no title)'}</p>
                 <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
                   {post.published_at ? new Date(post.published_at).toLocaleDateString() : ''}
                 </p>
@@ -343,13 +389,13 @@ function TopPostsTab({ posts }: { posts: TopPost[] }) {
 
 // ─── GrowthTab ────────────────────────────────────────────────────────────────
 
-function GrowthTab({ accountMetrics }: { accountMetrics: AccountMetric[] }) {
+function GrowthTab({ accountMetrics, platform }: { accountMetrics: AccountMetric[], platform?: SocialPlatform }) {
   if (!accountMetrics.length) return (
     <div className="flex flex-col items-center justify-center rounded-2xl py-20"
       style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
       <Users size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
       <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>No growth data yet</p>
-      <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Sync your analytics to track follower growth.</p>
+      <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Sync your analytics to track {platform === 'youtube' ? 'subscriber' : 'follower'} growth.</p>
     </div>
   )
 
@@ -361,7 +407,7 @@ function GrowthTab({ accountMetrics }: { accountMetrics: AccountMetric[] }) {
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-4">
         <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-          <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Total Followers</p>
+          <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{platform === 'youtube' ? 'Total Subscribers' : 'Total Followers'}</p>
           <p className="mt-3 text-3xl font-bold" style={{ color: 'var(--text)' }}>{fmt(latest.follower_count)}</p>
           {growth && (
             <div className="mt-1.5 flex items-center gap-1">
@@ -371,24 +417,31 @@ function GrowthTab({ accountMetrics }: { accountMetrics: AccountMetric[] }) {
           )}
         </div>
         <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-          <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Total Posts</p>
+          <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{platform === 'youtube' ? 'Total Videos' : 'Total Posts'}</p>
           <p className="mt-3 text-3xl font-bold" style={{ color: 'var(--text)' }}>{latest.total_posts}</p>
           <div className="mt-1.5 flex items-center gap-1">
             <Minus size={12} style={{ color: 'var(--text-muted)' }} />
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>on {latest.platform}</span>
           </div>
         </div>
+        {platform !== 'youtube' && (
+          <div className="rounded-2xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+            <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Total Following</p>
+            <p className="mt-3 text-3xl font-bold" style={{ color: 'var(--text)' }}>{fmt(latest.following_count ?? 0)}</p>
+          </div>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-2xl" style={{ border: '1px solid var(--border)' }}>
-        <div className="grid grid-cols-3 gap-4 px-5 py-3 text-[10px] font-semibold uppercase tracking-wider"
+        <div className="grid grid-cols-4 gap-4 px-5 py-3 text-[10px] font-semibold uppercase tracking-wider"
           style={{ backgroundColor: 'var(--bg-card)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>
           <div>Recorded At</div>
-          <div className="text-right">Followers</div>
-          <div className="text-right">Posts</div>
+          <div className="text-right">{platform === 'youtube' ? 'Subscribers' : 'Followers'}</div>
+          {platform !== 'youtube' && <div className="text-right">Following</div>}
+          <div className="text-right">{platform === 'youtube' ? 'Videos' : 'Posts'}</div>
         </div>
         {accountMetrics.slice(0, 10).map((row, i) => (
-          <div key={i} className="grid grid-cols-3 items-center gap-4 px-5 py-3.5 transition-all hover:bg-[var(--bg-hover)]"
+          <div key={i} className="grid grid-cols-4 items-center gap-4 px-5 py-3.5 transition-all hover:bg-[var(--bg-hover)]"
             style={{ backgroundColor: 'var(--bg-card)', borderBottom: i < Math.min(accountMetrics.length, 10) - 1 ? '1px solid var(--border)' : 'none' }}>
             <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
               {new Date(row.recorded_at).toLocaleDateString()}
@@ -396,6 +449,11 @@ function GrowthTab({ accountMetrics }: { accountMetrics: AccountMetric[] }) {
             <div className="text-right text-sm font-semibold" style={{ color: 'var(--text)' }}>
               {fmt(row.follower_count)}
             </div>
+            {platform !== 'youtube' && (
+              <div className="text-right text-sm" style={{ color: 'var(--text)' }}>
+                {fmt(row.following_count ?? 0)}
+              </div>
+            )}
             <div className="text-right text-sm" style={{ color: 'var(--text)' }}>{row.total_posts}</div>
           </div>
         ))}
@@ -408,10 +466,26 @@ function GrowthTab({ accountMetrics }: { accountMetrics: AccountMetric[] }) {
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-function AudienceTab({ demographics, postingTimes }: {
+function AudienceTab({ demographics, postingTimes, platform }: {
   demographics: Demographics | null
   postingTimes: PostingTime[]
+  platform?: SocialPlatform
 }) {
+  if (platform === 'tiktok' || platform === 'youtube') {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-2xl py-20"
+        style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        <Users size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+        <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>Not supported</p>
+        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+          {platform === 'youtube' 
+            ? 'Detailed audience demographics require additional YouTube API scopes.'
+            : 'Audience demographics are not supported by the public TikTok API.'}
+        </p>
+      </div>
+    )
+  }
+
   const noData = !demographics && !postingTimes.length
 
   if (noData) return (
@@ -537,7 +611,22 @@ function AudienceTab({ demographics, postingTimes }: {
 
 // ─── HashtagsTab ──────────────────────────────────────────────────────────────
 
-function HashtagsTab({ hashtags }: { hashtags: HashtagStat[] }) {
+function HashtagsTab({ hashtags, platform }: { hashtags: HashtagStat[], platform?: SocialPlatform }) {
+  if (platform === 'tiktok' || platform === 'youtube') {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-2xl py-20"
+        style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+        <BarChart2 size={40} style={{ color: 'var(--text-muted)', opacity: 0.3 }} />
+        <p className="mt-4 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>Not supported</p>
+        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
+          {platform === 'youtube'
+            ? 'Hashtag analytics are not supported by the YouTube API.'
+            : 'Hashtag analytics are not supported by the public TikTok API.'}
+        </p>
+      </div>
+    )
+  }
+
   if (!hashtags.length) return (
     <div className="flex flex-col items-center justify-center rounded-2xl py-20"
       style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
@@ -585,6 +674,8 @@ function HashtagsTab({ hashtags }: { hashtags: HashtagStat[] }) {
 export default function AnalyticsPage() {
   const navigate     = useNavigate()
   const { pathname } = useLocation()
+  const { activeWorkspace } = useProfileStore()
+  const workspaceId = activeWorkspace?.id ?? 'default-workspace'
   const [range, setRange]                   = useState<DateRange>('30d')
   const [syncing, setSyncing]               = useState(false)
   const [syncError, setSyncError]           = useState<string | null>(null)
@@ -599,6 +690,7 @@ export default function AnalyticsPage() {
   // Connected accounts + selected account
   const [accounts, setAccounts]             = useState<ConnectedAccount[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null)
+  const [dropdownOpen, setDropdownOpen]     = useState(false)
 
   const activeTab: Tab = pathname.includes('top-posts')
     ? 'top-posts'
@@ -618,29 +710,43 @@ export default function AnalyticsPage() {
     { id: 'hashtags'  as Tab, label: 'Hashtags',  href: '/analytics/hashtags' },
   ]
 
-  // Load connected accounts on mount
+  // Load connected accounts when workspace changes or mounts
   useEffect(() => {
-    ipc.invoke('integration:list', WORKSPACE_ID).then(rows => {
+    ipc.invoke('integration:list', workspaceId).then(rows => {
       const accs = (rows as ConnectedAccount[]) ?? []
       setAccounts(accs)
-      if (accs.length > 0 && !selectedAccountId) {
-        setSelectedAccountId(accs[0].id)
-        loadData(accs[0].id)
+      if (accs.length > 0) {
+        // Select first connected account or retain existing one if still valid
+        const stillValid = accs.some(a => a.id === selectedAccountId)
+        const nextId = stillValid ? selectedAccountId : accs[0].id
+        setSelectedAccountId(nextId)
+        loadData(nextId, range)
+      } else {
+        setSelectedAccountId(null)
+        setOverview(null)
+        setTopPosts([])
+        setTrend([])
+        setAccountMetrics([])
+        setPostingTimes([])
+        setHashtags([])
+        setDemographics(null)
       }
     }).catch(console.error)
-  }, [])
+  }, [workspaceId])
 
-  const loadData = useCallback(async (accountId?: string | null) => {
+  const loadData = useCallback(async (accountId?: string | null, currentRange?: DateRange) => {
     try {
       const id = accountId ?? selectedAccountId
+      if (!id) return
+      const activeRange = currentRange ?? range
       const [ov, tp, tr, am, pt, ht, dm] = await Promise.all([
-        ipc.invoke('analytics:overview',        WORKSPACE_ID, id),
-        ipc.invoke('analytics:top-posts',       WORKSPACE_ID, 20, id),
-        ipc.invoke('analytics:trend',           WORKSPACE_ID, id),
-        ipc.invoke('analytics:account-metrics', WORKSPACE_ID, id),
-        ipc.invoke('analytics:posting-times',   WORKSPACE_ID, id),
-        ipc.invoke('analytics:hashtags',        WORKSPACE_ID, id),
-        ipc.invoke('analytics:demographics',    WORKSPACE_ID, id),
+        ipc.invoke('analytics:overview',        workspaceId, id, activeRange),
+        ipc.invoke('analytics:top-posts',       workspaceId, 20, id, activeRange),
+        ipc.invoke('analytics:trend',           workspaceId, id, activeRange),
+        ipc.invoke('analytics:account-metrics', workspaceId, id),
+        ipc.invoke('analytics:posting-times',   workspaceId, id),
+        ipc.invoke('analytics:hashtags',        workspaceId, id),
+        ipc.invoke('analytics:demographics',    workspaceId, id),
       ])
       if (ov)  setOverview(ov as OverviewData)
       if (tp)  setTopPosts(tp as TopPost[])
@@ -652,17 +758,20 @@ export default function AnalyticsPage() {
     } catch (e) {
       console.error('Failed to load analytics:', e)
     }
-  }, [selectedAccountId])
+  }, [selectedAccountId, range])
 
   useEffect(() => {
-    if (selectedAccountId) loadData()
-  }, [selectedAccountId])
+    if (selectedAccountId) {
+      loadData(selectedAccountId, range)
+    }
+  }, [selectedAccountId, range, loadData])
 
   const handleSync = async () => {
+    if (!selectedAccountId) return
     setSyncing(true)
     setSyncError(null)
     try {
-      const results = await ipc.invoke('analytics:sync', WORKSPACE_ID)
+      const results = await ipc.invoke('analytics:sync', workspaceId, selectedAccountId)
       console.log('[Analytics] Sync results:', results)
       await loadData()
     } catch (e: any) {
@@ -671,6 +780,8 @@ export default function AnalyticsPage() {
       setSyncing(false)
     }
   }
+
+  const selectedPlatform = accounts.find(a => a.id === selectedAccountId)?.platform
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 animate-fade-in">
@@ -688,28 +799,106 @@ export default function AnalyticsPage() {
         <div className="flex items-center gap-3">
           {/* Platform / account selector */}
           {accounts.length > 0 && (
-            <div className="flex gap-1 rounded-xl p-1"
-              style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-              {accounts.map(acc => {
-                const color = PLATFORM_COLORS[acc.platform] ?? '#888'
-                const selected = selectedAccountId === acc.id
-                return (
-                  <button
-                    key={acc.id}
-                    onClick={() => { setSelectedAccountId(acc.id); loadData(acc.id) }}
-                    title={`${PLATFORM_LABELS[acc.platform]} — @${acc.platform_username}`}
-                    className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
+            <div className="relative">
+              <button
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+                className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-all hover:bg-[var(--bg-hover)]"
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border)',
+                  color: 'var(--text)',
+                }}
+              >
+                {(() => {
+                  const selectedAcc = accounts.find(a => a.id === selectedAccountId)
+                  if (!selectedAcc) return <span style={{ color: 'var(--text-muted)' }}>Select Platform</span>
+                  const color = PLATFORM_COLORS[selectedAcc.platform] ?? '#888'
+                  return (
+                    <span className="flex items-center gap-2">
+                      {selectedAcc.avatar_url ? (
+                        <div className="relative flex h-5 w-5 items-center justify-center">
+                          <img
+                            src={selectedAcc.avatar_url}
+                            alt={selectedAcc.platform_username}
+                            className="h-5 w-5 rounded-full object-cover"
+                            referrerPolicy="no-referrer"
+                            style={{ border: `1px solid ${color}` }}
+                          />
+                          <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[var(--bg-card)] p-0.5" style={{ color }}>
+                            <PlatformIcon platform={selectedAcc.platform} size={8} />
+                          </span>
+                        </div>
+                      ) : (
+                        <span style={{ color }}>
+                          <PlatformIcon platform={selectedAcc.platform} size={14} />
+                        </span>
+                      )}
+                      <span>@{selectedAcc.platform_username}</span>
+                    </span>
+                  )
+                })()}
+                <span className="ml-1 text-[10px] opacity-60">▼</span>
+              </button>
+
+              {dropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setDropdownOpen(false)} />
+                  <div className="absolute right-0 mt-2 w-56 rounded-2xl p-2.5 z-20 shadow-2xl animate-fade-in"
                     style={{
-                      backgroundColor: selected ? `${color}22` : 'transparent',
-                      color: selected ? color : 'var(--text-muted)',
-                      border: selected ? `1px solid ${color}` : '1px solid transparent',
-                    }}
-                  >
-                    <PlatformIcon platform={acc.platform} size={13} />
-                    @{acc.platform_username}
-                  </button>
-                )
-              })}
+                      backgroundColor: 'rgba(20, 20, 25, 0.85)',
+                      backdropFilter: 'blur(16px)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                    }}>
+                    <p className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-muted)' }}>
+                      Select Account
+                    </p>
+                    <div className="space-y-1">
+                      {accounts.map(acc => {
+                        const color = PLATFORM_COLORS[acc.platform] ?? '#888'
+                        const selected = selectedAccountId === acc.id
+                        return (
+                          <button
+                            key={acc.id}
+                            onClick={() => {
+                              setSelectedAccountId(acc.id)
+                              loadData(acc.id)
+                              setDropdownOpen(false)
+                            }}
+                            className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all hover:bg-[rgba(255,255,255,0.05)]"
+                            style={{
+                              color: selected ? color : 'var(--text)',
+                              backgroundColor: selected ? `${color}15` : 'transparent',
+                            }}
+                          >
+                            {acc.avatar_url ? (
+                              <div className="relative flex h-6 w-6 items-center justify-center flex-shrink-0">
+                                <img
+                                  src={acc.avatar_url}
+                                  alt={acc.platform_username}
+                                  className="h-6 w-6 rounded-full object-cover"
+                                  referrerPolicy="no-referrer"
+                                  style={{ border: `1.5px solid ${selected ? color : 'rgba(255,255,255,0.1)'}` }}
+                                />
+                                <span className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-[rgba(20,20,25,0.95)] p-0.5" style={{ color }}>
+                                  <PlatformIcon platform={acc.platform} size={9} />
+                                </span>
+                              </div>
+                            ) : (
+                              <span style={{ color }} className="flex-shrink-0">
+                                <PlatformIcon platform={acc.platform} size={15} />
+                              </span>
+                            )}
+                            <span className="flex-1 text-left truncate">
+                              @{acc.platform_username}
+                            </span>
+                            {selected && <span className="text-[10px]" style={{ color }}>●</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
           {accounts.length === 0 && (
@@ -719,14 +908,14 @@ export default function AnalyticsPage() {
           )}
           <div className="flex gap-1 rounded-xl p-1"
             style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-            {(['7d', '30d', '90d'] as DateRange[]).map(r => (
+            {(['7d', '30d', '90d', 'all'] as DateRange[]).map(r => (
               <button key={r} onClick={() => setRange(r)}
                 className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all"
                 style={{
                   backgroundColor: range === r ? 'var(--bg-hover)' : 'transparent',
                   color: range === r ? 'var(--text)' : 'var(--text-muted)',
                 }}>
-                {r === '7d' ? '7 days' : r === '30d' ? '30 days' : '90 days'}
+                {r === '7d' ? '7 days' : r === '30d' ? '30 days' : r === '90d' ? '90 days' : 'All'}
               </button>
             ))}
           </div>
@@ -765,12 +954,12 @@ export default function AnalyticsPage() {
         ))}
       </div>
 
-      {/* Content */}
-      {activeTab === 'overview'  && <OverviewTab overview={overview} trend={trend} syncing={syncing} />}
+    {/* Content */}
+      {activeTab === 'overview'  && <OverviewTab overview={overview} trend={trend} syncing={syncing} platform={selectedPlatform} />}
       {activeTab === 'top-posts' && <TopPostsTab posts={topPosts} />}
-      {activeTab === 'growth'    && <GrowthTab accountMetrics={accountMetrics} />}
-      {activeTab === 'audience'  && <AudienceTab demographics={demographics} postingTimes={postingTimes} />}
-      {activeTab === 'hashtags'  && <HashtagsTab hashtags={hashtags} />}
+      {activeTab === 'growth'    && <GrowthTab accountMetrics={accountMetrics} platform={selectedPlatform} />}
+      {activeTab === 'audience'  && <AudienceTab demographics={demographics} postingTimes={postingTimes} platform={selectedPlatform} />}
+      {activeTab === 'hashtags'  && <HashtagsTab hashtags={hashtags} platform={selectedPlatform} />}
     </div>
   )
 }

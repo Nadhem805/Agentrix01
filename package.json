@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "description": "Agentrix desktop application",
-  "author": "Nadhem",
+  "author": "Agentrix",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -17,8 +17,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "better-sqlite3": "12.9.0",
-    "dotenv": "17.4.2",
     "lucide-react": "^1.14.0",
     "ogl": "1.0.11",
     "react": "^18.2.0",
@@ -27,7 +25,6 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "7.6.13",
     "@types/node": "^20.12.7",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",

@@ -1,3 +1,5 @@
+// types/competitor.ts
+
 import type { SocialPlatform } from './post'
 
 export interface Competitor {
@@ -11,12 +13,17 @@ export interface Competitor {
   followerCount?: number
   lastSyncedAt?: string
   createdAt: string
+  avatarInitial?: string
+  avatarColor?: string
+  postCount?: number
+  avgEngagementRate?: number
 }
 
 export interface CompetitorPost {
   id: string
   competitorId: string
   platformPostId: string
+  permalink?: string
   caption?: string
   hashtags: string[]
   mediaType: 'image' | 'video' | 'carousel' | 'reel'

@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { getDatabase } from './database'
 import { decrypt, encrypt } from './encryption'
-import { getInstagramConfig } from './instagramOAuth'
+import { getInstagramConfig, fetchInstagramProfile } from './instagramOAuth'
 import { randomUUID } from 'node:crypto'
 
 const require = createRequire(import.meta.url)
@@ -37,13 +37,15 @@ export async function exchangeForLongLivedToken(shortToken: string): Promise<str
 
 export async function fetchAccountMetrics(accessToken: string): Promise<{
   followersCount: number
+  followingCount: number
   mediaCount: number
 }> {
-  const url = `https://graph.instagram.com/me?fields=followers_count,media_count&access_token=${accessToken}`
+  const url = `https://graph.instagram.com/me?fields=followers_count,follows_count,media_count&access_token=${accessToken}`
   const res = await httpsGet(url)
   if (res.error) throw new Error(res.error.message)
   return {
     followersCount: res.followers_count ?? 0,
+    followingCount: res.follows_count ?? 0,
     mediaCount:     res.media_count ?? 0,
   }
 }
@@ -292,15 +294,50 @@ export async function syncInstagramAnalytics(accountId: string): Promise<SyncRes
 
   const result: SyncResult = { accountId, postssynced: 0, postsFailed: 0, errors: [] }
 
+  // Migrate existing bad date formats (+0000 offset) if any to correct ISO standard
+  try {
+    const badPosts = db.prepare(`
+      SELECT id, published_at, created_at FROM posts 
+      WHERE published_at LIKE '%+0000' OR created_at LIKE '%+0000'
+    `).all() as any[]
+    for (const bp of badPosts) {
+      const pub = bp.published_at.includes('+0000') ? new Date(bp.published_at).toISOString() : bp.published_at
+      const cre = bp.created_at.includes('+0000') ? new Date(bp.created_at).toISOString() : bp.created_at
+      db.prepare('UPDATE posts SET published_at = ?, created_at = ? WHERE id = ?').run(pub, cre, bp.id)
+    }
+
+    const badTargets = db.prepare(`
+      SELECT id, published_at FROM post_platform_targets 
+      WHERE platform = 'instagram' AND published_at LIKE '%+0000'
+    `).all() as any[]
+    for (const bt of badTargets) {
+      const pub = new Date(bt.published_at).toISOString()
+      db.prepare('UPDATE post_platform_targets SET published_at = ? WHERE id = ?').run(pub, bt.id)
+    }
+    console.log('[Instagram Analytics] Date format migration/repair complete')
+  } catch (e: any) {
+    console.warn('[Instagram Analytics] Date format migration failed:', e.message)
+  }
+
   // Fetch and store account metrics
   try {
+    try {
+      const profile = await fetchInstagramProfile(accessToken)
+      if (profile.profile_picture_url) {
+        db.prepare('UPDATE social_accounts SET avatar_url = ? WHERE id = ?').run(profile.profile_picture_url, accountId)
+        console.log('[Instagram Analytics] Updated profile avatar_url during sync')
+      }
+    } catch (e: any) {
+      console.warn('[Instagram Analytics] Failed to sync avatar_url:', e.message)
+    }
+
     const metrics = await fetchAccountMetrics(accessToken)
     // Delete today's existing entry first to avoid duplicates
     db.prepare(`DELETE FROM account_metrics WHERE social_account_id = ? AND DATE(recorded_at) = DATE('now')`).run(accountId)
     db.prepare(`
       INSERT INTO account_metrics (id, social_account_id, follower_count, following_count, total_posts, avg_engagement_rate, recorded_at)
-      VALUES (?, ?, ?, 0, ?, 0, datetime('now'))
-    `).run(randomUUID(), accountId, metrics.followersCount, metrics.mediaCount)
+      VALUES (?, ?, ?, ?, ?, 0, datetime('now'))
+    `).run(randomUUID(), accountId, metrics.followersCount, metrics.followingCount, metrics.mediaCount)
     console.log('[Instagram Analytics] Account metrics saved:', metrics)
   } catch (e: any) {
     result.errors.push(`Account metrics: ${e.message}`)
@@ -322,10 +359,12 @@ export async function syncInstagramAnalytics(accountId: string): Promise<SyncRes
   // For each post, fetch insights and store
   for (const post of media) {
     try {
+      const publishedAt = new Date(post.timestamp).toISOString()
+
       // Upsert into posts table
       const existingPost = db.prepare(
         `SELECT id FROM posts WHERE workspace_id = ? AND caption = ? AND created_at LIKE ?`
-      ).get(account.workspace_id, post.caption ?? '', post.timestamp.substring(0, 10) + '%') as any
+      ).get(account.workspace_id, post.caption ?? '', publishedAt.substring(0, 10) + '%') as any
 
       let postId = existingPost?.id
       if (!postId) {
@@ -333,7 +372,7 @@ export async function syncInstagramAnalytics(accountId: string): Promise<SyncRes
         db.prepare(`
           INSERT OR IGNORE INTO posts (id, workspace_id, caption, hashtags, status, published_at, created_at, updated_at)
           VALUES (?, ?, ?, '[]', 'published', ?, ?, datetime('now'))
-        `).run(postId, account.workspace_id, post.caption ?? '', post.timestamp, post.timestamp)
+        `).run(postId, account.workspace_id, post.caption ?? '', publishedAt, publishedAt)
       }
 
       // Upsert post_platform_target
@@ -345,9 +384,12 @@ export async function syncInstagramAnalytics(accountId: string): Promise<SyncRes
       if (!targetId) {
         targetId = randomUUID()
         db.prepare(`
-          INSERT OR IGNORE INTO post_platform_targets (id, post_id, platform, social_account_id, platform_post_id, permalink, status, published_at)
-          VALUES (?, ?, 'instagram', ?, ?, ?, 'published', ?)
-        `).run(targetId, postId, accountId, post.id, post.permalink ?? '', post.timestamp)
+          INSERT OR IGNORE INTO post_platform_targets (id, post_id, platform, social_account_id, platform_post_id, permalink, status, published_at, thumbnail_url)
+          VALUES (?, ?, 'instagram', ?, ?, ?, 'published', ?, ?)
+        `).run(targetId, postId, accountId, post.id, post.permalink ?? '', publishedAt, post.thumbnail_url || post.media_url || '')
+      } else {
+        db.prepare(`UPDATE post_platform_targets SET thumbnail_url = ? WHERE id = ?`)
+          .run(post.thumbnail_url || post.media_url || '', targetId)
       }
 
       // Fetch and store insights

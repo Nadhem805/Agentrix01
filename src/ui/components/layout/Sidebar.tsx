@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { useProfileStore } from '@/stores/profileStore'
+import { useAuthStore } from '@/stores/authStore'
 import {
   LayoutDashboard,
   FileText,
@@ -7,7 +9,6 @@ import {
   ChevronDown,
   Calendar,
   TrendingUp,
-  Bell,
   Store,
   Settings,
   Bot,
@@ -49,14 +50,9 @@ const navItems: NavItem[] = [
     icon: LayoutDashboard,
   },
   {
-    title: 'AI Agents',
+    title: 'Agents',
     href: '/agents',
     icon: Bot,
-    children: [
-      { title: 'Analyzer',  href: '/agents/analyzer' },
-      { title: 'Planner',   href: '/agents/planner' },
-      { title: 'Creator',   href: '/agents/creator' },
-    ],
   },
   {
     title: 'Content Studio',
@@ -69,33 +65,19 @@ const navItems: NavItem[] = [
     icon: Calendar,
   },
   {
+    title: 'Analytics',
+    href: '/analytics',
+    icon: TrendingUp,
+  },
+  {
     title: 'Competitors',
     href: '/competitors',
     icon: UserSearch,
   },
   {
-    title: 'Analytics',
-    href: '/analytics',
-    icon: TrendingUp,
-    children: [
-      { title: 'Overview',  href: '/analytics' },
-      { title: 'Top Posts', href: '/analytics/top-posts' },
-      { title: 'Growth',    href: '/analytics/growth' },
-      { title: 'Audience',  href: '/analytics/audience' },
-      { title: 'Hashtags',  href: '/analytics/hashtags' },
-    ],
-  },
-  {
     title: 'Integrations',
     href: '/integrations',
     icon: Store,
-  },
-  {
-    title: 'Notifications',
-    href: '/notifications',
-    icon: Bell,
-    badge: 4,
-    badgeColor: 'blue',
   },
   {
     title: 'Settings',
@@ -134,6 +116,9 @@ function Badge({ count, color = 'violet' }: { count: number; color?: string }) {
 
 export default function Sidebar() {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
+  const { profile } = useProfileStore()
+  const { logout } = useAuthStore()
   const [expanded, setExpanded] = useState<string[]>(() => {
     // Auto-expand any parent whose child matches the current path on mount
     return navItems
@@ -320,14 +305,14 @@ export default function Sidebar() {
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
               style={{ background: 'linear-gradient(135deg, var(--primary), var(--secondary))' }}
             >
-              N
+              {profile?.name ? profile.name[0].toUpperCase() : 'N'}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold" style={{ color: 'var(--text)' }}>
-                Nadhem
+                {profile?.name ?? 'Nadhem'}
               </p>
               <p className="truncate text-xs" style={{ color: 'var(--text-muted)' }}>
-                nadhem@agentrix.io
+                {profile ? 'Local Account' : 'Guest'}
               </p>
             </div>
           </div>
@@ -344,6 +329,10 @@ export default function Sidebar() {
 
         {/* Logout */}
         <button
+          onClick={() => {
+            logout()
+            navigate('/login')
+          }}
           className="flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all"
           style={{ color: '#EF4444' }}
           onMouseEnter={(e) => {

@@ -108,13 +108,14 @@ export async function exchangeCodeForToken(code: string): Promise<TokenResponse>
 // ─── Step 3 — Fetch Instagram user profile ────────────────────────────────────
 
 interface InstagramProfile {
-  id:       string
-  username: string
-  name?:    string
+  id:                   string
+  username:             string
+  name?:                string
+  profile_picture_url?: string
 }
 
 export async function fetchInstagramProfile(accessToken: string): Promise<InstagramProfile> {
-  const fields = 'id,username,name'
+  const fields = 'id,username,name,profile_picture_url'
   const url    = `https://graph.instagram.com/me?fields=${fields}&access_token=${accessToken}`
 
   return new Promise((resolve, reject) => {
@@ -161,31 +162,30 @@ export function saveInstagramAccount(
   }
 
   const encryptedToken = encrypt(accessToken, encryptionKey)
-
-  const existing = db
-    .prepare('SELECT id FROM social_accounts WHERE workspace_id = ? AND platform = ? AND platform_user_id = ?')
+  const existing = db.prepare('SELECT id FROM social_accounts WHERE workspace_id = ? AND platform = ? AND platform_user_id = ?')
     .get(workspaceId, 'instagram', profile.id)
 
   if (existing) {
     db.prepare(`
       UPDATE social_accounts
       SET access_token = ?, platform_username = ?, platform_display_name = ?,
-          is_active = 1, updated_at = datetime('now')
+          avatar_url = ?, is_active = 1, updated_at = datetime('now')
       WHERE workspace_id = ? AND platform = ? AND platform_user_id = ?
-    `).run(encryptedToken, profile.username, profile.name ?? profile.username, workspaceId, 'instagram', profile.id)
+    `).run(encryptedToken, profile.username, profile.name ?? profile.username, profile.profile_picture_url ?? null, workspaceId, 'instagram', profile.id)
     console.log('[Instagram OAuth] Updated existing account:', profile.username)
   } else {
     db.prepare(`
       INSERT INTO social_accounts
         (id, workspace_id, platform, platform_user_id, platform_username,
-         platform_display_name, access_token, scopes, is_active, connected_at, updated_at)
-      VALUES (?, ?, 'instagram', ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
+         platform_display_name, avatar_url, access_token, scopes, is_active, connected_at, updated_at)
+      VALUES (?, ?, 'instagram', ?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))
     `).run(
       randomUUID(),
       workspaceId,
       profile.id,
       profile.username,
       profile.name ?? profile.username,
+      profile.profile_picture_url ?? null,
       encryptedToken,
       JSON.stringify([
         'instagram_business_basic',

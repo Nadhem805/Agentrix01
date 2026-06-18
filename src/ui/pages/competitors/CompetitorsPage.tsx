@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   UserSearch,
   Plus,
@@ -12,6 +12,9 @@ import {
   Eye,
   Search,
 } from 'lucide-react'
+import { useCompetitorStore } from '../../stores/competitorStore'
+import { useProfileStore } from '../../stores/profileStore'
+import type { Competitor, CompetitorPost } from '@/types/competitor'
 
 // ─── Social platform SVG icons ────────────────────────────────────────────────
 
@@ -49,118 +52,14 @@ const TikTokIcon = ({ size = 16 }: { size?: number }) => (
 
 type SocialPlatform = 'instagram' | 'tiktok' | 'twitter' | 'youtube' | 'linkedin'
 
-interface Competitor {
-  id: string
-  platform: SocialPlatform
-  platformUsername: string
-  displayName: string
-  followerCount: number
-  avgEngagementRate: number
-  lastSyncedAt: string
-  avatarInitial: string
-  avatarColor: string
-  postCount: number
-}
-
-interface CompetitorPost {
-  id: string
-  competitorId: string
-  caption: string
-  mediaType: 'image' | 'video' | 'carousel' | 'reel'
-  likes: number
-  comments: number
-  shares: number
-  views?: number
-  engagementRate: number
-  postedAt: string
-}
-
-// ─── Mock data ────────────────────────────────────────────────────────────────
-
-const mockCompetitors: Competitor[] = [
-  {
-    id: '1',
-    platform: 'instagram',
-    platformUsername: 'contentcreator_pro',
-    displayName: 'Content Creator Pro',
-    followerCount: 128400,
-    avgEngagementRate: 5.2,
-    lastSyncedAt: '2 hours ago',
-    avatarInitial: 'C',
-    avatarColor: '#E4405F',
-    postCount: 47,
-  },
-  {
-    id: '2',
-    platform: 'twitter',
-    platformUsername: 'marketingwizard',
-    displayName: 'Marketing Wizard',
-    followerCount: 84200,
-    avgEngagementRate: 3.8,
-    lastSyncedAt: '5 hours ago',
-    avatarInitial: 'M',
-    avatarColor: '#1DA1F2',
-    postCount: 31,
-  },
-  {
-    id: '3',
-    platform: 'youtube',
-    platformUsername: 'growthhacker',
-    displayName: 'Growth Hacker',
-    followerCount: 312000,
-    avgEngagementRate: 7.1,
-    lastSyncedAt: '1 day ago',
-    avatarInitial: 'G',
-    avatarColor: '#FF0000',
-    postCount: 18,
-  },
-]
-
-const mockPosts: CompetitorPost[] = [
-  {
-    id: 'p1',
-    competitorId: '1',
-    caption: '5 content strategies that doubled my engagement in 30 days 🚀 #contentmarketing #growth',
-    mediaType: 'carousel',
-    likes: 4820,
-    comments: 312,
-    shares: 891,
-    engagementRate: 8.4,
-    postedAt: '2 days ago',
-  },
-  {
-    id: 'p2',
-    competitorId: '1',
-    caption: 'Behind the scenes of my content creation setup 📸 #creator #behindthescenes',
-    mediaType: 'reel',
-    likes: 9100,
-    comments: 540,
-    shares: 1200,
-    views: 84000,
-    engagementRate: 12.1,
-    postedAt: '4 days ago',
-  },
-  {
-    id: 'p3',
-    competitorId: '2',
-    caption: 'The algorithm changed again. Here\'s what you need to know 🧵',
-    mediaType: 'image',
-    likes: 2100,
-    comments: 430,
-    shares: 1800,
-    engagementRate: 5.2,
-    postedAt: '1 day ago',
-  },
-]
-
 // ─── Platform config ──────────────────────────────────────────────────────────
 
-const platformConfig: Record<SocialPlatform, { label: string; color: string; Icon: React.ElementType }> = {
-  instagram: { label: 'Instagram', color: '#E4405F', Icon: InstagramIcon },
-  tiktok:    { label: 'TikTok',    color: '#69C9D0', Icon: TikTokIcon },
-  twitter:   { label: 'Twitter/X', color: '#1DA1F2', Icon: TwitterIcon },
-  youtube:   { label: 'YouTube',   color: '#FF0000', Icon: YoutubeIcon },
-  linkedin:  { label: 'LinkedIn',  color: '#0A66C2', Icon: LinkedinIcon },
+const platformConfig: Record<SocialPlatform, { label: string; color: string; Icon: React.ElementType; supportsRSS: boolean; supportsRealSync: boolean }> = {
+  instagram: { label: 'Instagram', color: '#E4405F', Icon: InstagramIcon, supportsRSS: false, supportsRealSync: true },
+  tiktok:    { label: 'TikTok',    color: '#69C9D0', Icon: TikTokIcon, supportsRSS: false, supportsRealSync: false },
+  twitter:   { label: 'Twitter/X', color: '#1DA1F2', Icon: TwitterIcon, supportsRSS: false, supportsRealSync: false },
+  youtube:   { label: 'YouTube',   color: '#FF0000', Icon: YoutubeIcon, supportsRSS: true, supportsRealSync: true },
+  linkedin:  { label: 'LinkedIn',  color: '#0A66C2', Icon: LinkedinIcon, supportsRSS: false, supportsRealSync: false },
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -171,11 +70,35 @@ function formatNumber(n: number): string {
   return String(n)
 }
 
+
 // ─── Add Competitor Modal ─────────────────────────────────────────────────────
 
-function AddCompetitorModal({ onClose }: { onClose: () => void }) {
-  const [platform, setPlatform] = useState<SocialPlatform>('instagram')
+function AddCompetitorModal({
+  onClose,
+  onAdd,
+}: {
+  onClose: () => void
+  onAdd: (platform: SocialPlatform, username: string) => Promise<void>
+}) {
+  const [platform, setPlatform] = useState<SocialPlatform>('youtube')
   const [username, setUsername] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleSubmit = async () => {
+    if (!username.trim()) return
+    setIsSubmitting(true)
+    setError(null)
+    try {
+      await onAdd(platform, username.trim())
+      onClose()
+    } catch (e: any) {
+      console.error(e)
+      setError(e.message || 'Failed to add competitor')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -205,14 +128,16 @@ function AddCompetitorModal({ onClose }: { onClose: () => void }) {
           </label>
           <div className="grid grid-cols-5 gap-2">
             {(Object.keys(platformConfig) as SocialPlatform[]).map((p) => {
-              const { label, color, Icon } = platformConfig[p]
+              const { label, color, Icon, supportsRSS, supportsRealSync } = platformConfig[p]
               const selected = platform === p
+              const badgeText = supportsRSS ? 'RSS' : supportsRealSync ? 'Live' : null
               return (
                 <button
                   key={p}
                   onClick={() => setPlatform(p)}
-                  title={label}
-                  className="flex flex-col items-center gap-1 rounded-xl py-2.5 text-xs font-medium transition-all"
+                  title={badgeText ? `${label} (${badgeText})` : label}
+                  disabled={isSubmitting}
+                  className="relative flex flex-col items-center gap-1 rounded-xl py-2.5 text-xs font-medium transition-all"
                   style={{
                     backgroundColor: selected ? `${color}22` : 'var(--bg-card)',
                     border: `1px solid ${selected ? color : 'var(--border)'}`,
@@ -220,29 +145,43 @@ function AddCompetitorModal({ onClose }: { onClose: () => void }) {
                   }}
                 >
                   <Icon size={16} />
+                  {badgeText && (
+                    <span className="absolute -top-1 -right-1 text-[8px] font-bold px-1 rounded-full" style={{ backgroundColor: color, color: 'white' }}>
+                      {badgeText}
+                    </span>
+                  )}
                 </button>
               )
             })}
           </div>
         </div>
 
-        {/* Username input */}
-        <div className="mb-6">
+        {/* Username/URL input */}
+        <div className="mb-4">
           <label className="mb-1.5 block text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-            Username
+            {platform === 'youtube' ? 'Channel URL or Channel ID' : 'Username or Profile URL'}
           </label>
           <div className="relative">
-            <span
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-sm"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              @
-            </span>
+            {platform !== 'youtube' && (
+              <span
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-sm"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                @
+              </span>
+            )}
             <input
               type="text"
               value={username}
+              disabled={isSubmitting}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="username"
+              placeholder={
+                platform === 'youtube'
+                  ? 'e.g. https://youtube.com/@channel or UCXXXXXX'
+                  : platform === 'instagram'
+                  ? 'e.g. https://instagram.com/nike or @nike'
+                  : 'e.g. username or https://instagram.com/username'
+              }
               className="w-full rounded-xl py-2.5 pl-7 pr-4 text-sm outline-none transition-all"
               style={{
                 backgroundColor: 'var(--bg-card)',
@@ -255,10 +194,37 @@ function AddCompetitorModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
+        {/* YouTube info note */}
+        {platform === 'youtube' && (
+          <div className="mb-4 rounded-lg p-3 text-xs" style={{ backgroundColor: 'rgba(255,0,0,0.08)', border: '1px solid rgba(255,0,0,0.2)' }}>
+            <p style={{ color: '#FF0000' }} className="font-medium mb-1">✨ No authentication needed!</p>
+            <p style={{ color: 'var(--text-muted)' }}>
+              YouTube channels have free public RSS feeds. Just enter the channel URL or ID and we'll fetch their latest videos.
+            </p>
+          </div>
+        )}
+
+        {/* Instagram info note */}
+        {platform === 'instagram' && (
+          <div className="mb-4 rounded-lg p-3 text-xs" style={{ backgroundColor: 'rgba(228,64,95,0.08)', border: '1px solid rgba(228,64,95,0.2)' }}>
+            <p style={{ color: '#E4405F' }} className="font-medium mb-1">✨ Public profile sync!</p>
+            <p style={{ color: 'var(--text-muted)' }}>
+              We'll fetch the real display name, avatar, and follower count from Instagram's public page.
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <p className="mb-4 text-xs font-semibold" style={{ color: 'var(--danger)' }}>
+            {error}
+          </p>
+        )}
+
         {/* Actions */}
         <div className="flex gap-3">
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className="flex-1 rounded-xl py-2.5 text-sm font-medium transition-all hover:opacity-80"
             style={{
               backgroundColor: 'var(--bg-card)',
@@ -269,12 +235,13 @@ function AddCompetitorModal({ onClose }: { onClose: () => void }) {
             Cancel
           </button>
           <button
-            onClick={onClose}
-            disabled={!username.trim()}
-            className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90 disabled:opacity-40 glow-primary"
+            onClick={handleSubmit}
+            disabled={!username.trim() || isSubmitting}
+            className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90 disabled:opacity-40 glow-primary flex items-center justify-center gap-1.5"
             style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
           >
-            Add Competitor
+            {isSubmitting && <RefreshCw size={14} className="animate-spin" />}
+            {isSubmitting ? 'Adding...' : 'Add Competitor'}
           </button>
         </div>
       </div>
@@ -288,12 +255,23 @@ function CompetitorCard({
   competitor,
   selected,
   onClick,
+  onRemove,
+  onSync,
+  isSyncing,
 }: {
   competitor: Competitor
   selected: boolean
   onClick: () => void
+  onRemove: () => void
+  onSync: () => void
+  isSyncing: boolean
 }) {
-  const { label, color, Icon } = platformConfig[competitor.platform]
+  const { label, color, Icon, supportsRSS, supportsRealSync } = platformConfig[competitor.platform];
+const displayName = competitor.displayName || competitor.platformUsername;
+const avatarUrl = competitor.avatarUrl;
+const avatarColor = competitor.avatarColor || '#6C3BFF';
+const avatarInitial = competitor.avatarInitial || 'C';
+const badgeText = supportsRSS ? 'RSS' : supportsRealSync ? 'Live' : null;
 
   return (
     <div
@@ -306,17 +284,20 @@ function CompetitorCard({
     >
       <div className="flex items-start gap-3">
         {/* Avatar */}
-        <div
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold text-white"
-          style={{ backgroundColor: competitor.avatarColor }}
-        >
-          {competitor.avatarInitial}
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full overflow-hidden bg-white border border-gray-300">
+          {avatarUrl ? (
+            <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" />
+          ) : (
+            <span className="text-sm font-bold text-white" style={{ backgroundColor: avatarColor, width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {avatarInitial}
+            </span>
+          )}
         </div>
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="truncate text-sm font-semibold" style={{ color: 'var(--text)' }}>
-              {competitor.displayName}
+              {displayName}
             </p>
             <span
               className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold"
@@ -325,6 +306,11 @@ function CompetitorCard({
               <Icon size={10} />
               {label}
             </span>
+            {badgeText && (
+              <span className="text-[8px] font-bold px-1 rounded-full" style={{ backgroundColor: color, color: 'white' }}>
+                {badgeText}
+              </span>
+            )}
           </div>
           <p className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
             @{competitor.platformUsername}
@@ -333,7 +319,7 @@ function CompetitorCard({
           <div className="mt-3 grid grid-cols-3 gap-2">
             <div>
               <p className="text-xs font-bold" style={{ color: 'var(--text)' }}>
-                {formatNumber(competitor.followerCount)}
+                {formatNumber(competitor.followerCount || 0)}
               </p>
               <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                 Followers
@@ -341,7 +327,7 @@ function CompetitorCard({
             </div>
             <div>
               <p className="text-xs font-bold" style={{ color: 'var(--success)' }}>
-                {competitor.avgEngagementRate}%
+                {competitor.avgEngagementRate || 0}%
               </p>
               <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                 Avg. Eng.
@@ -349,7 +335,7 @@ function CompetitorCard({
             </div>
             <div>
               <p className="text-xs font-bold" style={{ color: 'var(--text)' }}>
-                {competitor.postCount}
+                {competitor.postCount || 0}
               </p>
               <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
                 Posts
@@ -361,19 +347,26 @@ function CompetitorCard({
 
       <div className="mt-3 flex items-center justify-between">
         <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-          Synced {competitor.lastSyncedAt}
+          Synced {competitor.lastSyncedAt || 'Never'}
         </p>
         <div className="flex gap-1.5">
           <button
-            onClick={(e) => e.stopPropagation()}
-            className="rounded-lg p-1.5 transition-all hover:opacity-80"
+            onClick={(e) => {
+              e.stopPropagation()
+              onSync()
+            }}
+            disabled={isSyncing}
+            className="rounded-lg p-1.5 transition-all hover:opacity-80 disabled:opacity-50"
             style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-muted)' }}
             title="Sync now"
           >
-            <RefreshCw size={11} />
+            <RefreshCw size={11} className={isSyncing ? 'animate-spin' : ''} />
           </button>
           <button
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              onRemove()
+            }}
             className="rounded-lg p-1.5 transition-all hover:opacity-80"
             style={{ backgroundColor: 'rgba(239,68,68,0.12)', color: 'var(--danger)' }}
             title="Remove"
@@ -388,7 +381,7 @@ function CompetitorCard({
 
 // ─── Post Row ─────────────────────────────────────────────────────────────────
 
-function PostRow({ post }: { post: CompetitorPost }) {
+function PostRow({ post, platform }: { post: CompetitorPost; platform?: SocialPlatform }) {
   const mediaTypeColors: Record<string, string> = {
     image:    'var(--secondary)',
     video:    '#A84FFF',
@@ -412,10 +405,10 @@ function PostRow({ post }: { post: CompetitorPost }) {
         {post.mediaType}
       </div>
 
-      {/* Caption */}
+      {/* Caption/Title */}
       <div className="min-w-0 flex-1">
         <p className="line-clamp-2 text-sm" style={{ color: 'var(--text)' }}>
-          {post.caption}
+          {post.caption || (platform === 'youtube' ? 'Untitled Video' : 'No caption')}
         </p>
         <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
           {post.postedAt}
@@ -449,13 +442,16 @@ function PostRow({ post }: { post: CompetitorPost }) {
           <TrendingUp size={11} />
           {post.engagementRate}%
         </div>
-        <button
+        <a
+          href={post.permalink}
+          target="_blank"
+          rel="noopener noreferrer"
           className="opacity-0 group-hover:opacity-100 rounded-lg p-1.5 transition-all"
           style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-muted)' }}
           title="Open post"
         >
           <ExternalLink size={12} />
-        </button>
+        </a>
       </div>
     </div>
   )
@@ -465,17 +461,165 @@ function PostRow({ post }: { post: CompetitorPost }) {
 
 export default function CompetitorsPage() {
   const [showModal, setShowModal] = useState(false)
-  const [selectedId, setSelectedId] = useState<string>(mockCompetitors[0].id)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
 
-  const selected = mockCompetitors.find((c) => c.id === selectedId)
-  const posts = mockPosts.filter((p) => p.competitorId === selectedId)
+  const activeWorkspace = useProfileStore((state) => state.activeWorkspace)
+  const {
+    competitors,
+    competitorPosts,
+    isLoading,
+    isSyncing,
+    fetchCompetitors,
+    addCompetitor,
+    removeCompetitor,
+    syncCompetitor,
+    getCompetitorPosts,
+  } = useCompetitorStore()
 
-  const filtered = mockCompetitors.filter(
+  // 1. Fetch competitors for the active workspace
+  useEffect(() => {
+    if (activeWorkspace) {
+      fetchCompetitors(activeWorkspace.id)
+    }
+  }, [activeWorkspace, fetchCompetitors])
+
+  // 2. Manage selected competitor state & auto-select the first one
+  useEffect(() => {
+    if (competitors.length > 0) {
+      if (!selectedId || !competitors.some((c) => c.id === selectedId)) {
+        setSelectedId(competitors[0].id)
+      }
+    } else {
+      setSelectedId(null)
+    }
+  }, [competitors, selectedId])
+
+  // 3. Fetch posts whenever selected competitor changes
+  useEffect(() => {
+    if (selectedId) {
+      getCompetitorPosts(selectedId)
+    }
+  }, [selectedId, getCompetitorPosts])
+
+  const selected = competitors.find((c) => c.id === selectedId)
+  const posts = selectedId ? (competitorPosts[selectedId] || []) : []
+
+  const filtered = competitors.filter(
     (c) =>
-      c.displayName.toLowerCase().includes(search.toLowerCase()) ||
+      (c.displayName || c.platformUsername).toLowerCase().includes(search.toLowerCase()) ||
       c.platformUsername.toLowerCase().includes(search.toLowerCase())
   )
+
+  // Helper to resolve YouTube channel ID from a handle by scraping the channel page
+  const resolveYouTubeChannelId = async (handle: string): Promise<string | undefined> => {
+    try {
+      const response = await fetch(`https://www.youtube.com/@${handle}`);
+      const html = await response.text();
+      const match = html.match(/"channelId":"(UC[\\w-]{22})"/);
+      return match ? match[1] : undefined;
+    } catch (e) {
+      console.error('Failed to resolve YouTube channel ID:', e);
+      return undefined;
+    }
+  };
+
+  const handleAdd = async (platform: SocialPlatform, input: string) => {
+    if (!activeWorkspace) return;
+    let username = input.trim();
+    let channelId: string | undefined;
+
+    // Attempt to parse as URL
+    try {
+      const url = new URL(username);
+      const pathParts = url.pathname.split('/').filter(Boolean);
+      switch (platform) {
+        case 'youtube':
+          // Support @username, /channel/ID, /c/ID, /user/username, or video URLs
+          if (pathParts.length) {
+            const first = pathParts[0];
+            if (first.startsWith('@')) {
+              username = first.slice(1);
+              // Resolve handle to channel ID if possible
+              channelId = await resolveYouTubeChannelId(username);
+            } else if (first === 'channel' && pathParts[1]) {
+              channelId = pathParts[1];
+              username = channelId;
+            } else if (first === 'c' && pathParts[1]) {
+              username = pathParts[1];
+            } else if (first === 'user' && pathParts[1]) {
+              username = pathParts[1];
+            } else if (url.searchParams.has('v')) {
+              // Reject video URLs
+              throw new Error('Please provide the channel URL, not a video URL');
+            }
+          } else if (username.match(/^UC[\w-]{22}$/i)) {
+            // Already a channel ID
+            channelId = username;
+          }
+          break;
+        case 'tiktok': {
+          const tiktokPart = pathParts.find(p => p.startsWith('@')) || pathParts[0];
+          if (tiktokPart) {
+            username = tiktokPart.replace(/^@/, '').replace(/\/$/, '').trim();
+          }
+          break;
+        }
+        case 'instagram':
+          if (pathParts.length) {
+            const first = pathParts[0];
+            if (first !== 'p' && first !== 'reel' && first !== 'stories' && first !== 'tv' && first !== 'explore') {
+              username = first;
+            }
+          }
+          break;
+        case 'twitter':
+          if (pathParts.length) username = pathParts[0].replace(/^@/, '');
+          break;
+        case 'linkedin':
+          if (pathParts.length >= 2) username = pathParts[1];
+          break;
+        default:
+          break;
+      }
+    } catch {
+      // Not a URL – keep original input
+    }
+
+    // Sanitize username
+    username = decodeURIComponent(username)
+      .replace(/^@/, '')
+      .replace(/\/+$/, '')
+      .split('?')[0]
+      .trim()
+      .replace(/\s+/g, '');
+
+    // For YouTube, prefer resolved channel ID, otherwise fall back to handle/username
+    const finalUsername = channelId || username;
+
+    const created = await addCompetitor(activeWorkspace.id, platform, finalUsername);
+    setSelectedId(created.id);
+    // If YouTube and we used a handle (no channelId), try to resolve and sync
+    if (platform === 'youtube' && !channelId) {
+      const resolvedId = await resolveYouTubeChannelId(finalUsername);
+      if (resolvedId) {
+        // Update competitor with proper channel ID by re-syncing
+        await syncCompetitor(created.id);
+      }
+    }
+  };
+
+  const handleRemove = async (id: string) => {
+    if (confirm('Are you sure you want to remove this competitor? This will clear all synced posts.')) {
+      await removeCompetitor(id)
+    }
+  }
+
+  const handleSync = async (id: string) => {
+    await syncCompetitor(id)
+  }
+
+  const selectedPlatform = selected?.platform
 
   return (
     <div className="flex h-full gap-6 animate-fade-in">
@@ -492,7 +636,7 @@ export default function CompetitorsPage() {
               className="rounded-full px-2 py-0.5 text-[10px] font-bold"
               style={{ backgroundColor: 'rgba(108,59,255,0.18)', color: '#A084FF' }}
             >
-              {mockCompetitors.length}
+              {competitors.length}
             </span>
           </div>
           <button
@@ -530,7 +674,12 @@ export default function CompetitorsPage() {
 
         {/* List */}
         <div className="flex flex-col gap-3 overflow-y-auto">
-          {filtered.length === 0 ? (
+          {isLoading && competitors.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>
+              <RefreshCw size={18} className="animate-spin" />
+              <span>Loading competitors...</span>
+            </div>
+          ) : filtered.length === 0 ? (
             <p className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
               No competitors found.
             </p>
@@ -541,6 +690,9 @@ export default function CompetitorsPage() {
                 competitor={c}
                 selected={selectedId === c.id}
                 onClick={() => setSelectedId(c.id)}
+                onRemove={() => handleRemove(c.id)}
+                onSync={() => handleSync(c.id)}
+                isSyncing={isSyncing === c.id}
               />
             ))
           )}
@@ -557,18 +709,22 @@ export default function CompetitorsPage() {
               style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border)' }}
             >
               <div className="flex items-center gap-4">
-                <div
-                  className="flex h-12 w-12 items-center justify-center rounded-full text-base font-bold text-white"
-                  style={{ backgroundColor: selected.avatarColor }}
-                >
-                  {selected.avatarInitial}
+                <div className="flex h-12 w-12 items-center justify-center rounded-full overflow-hidden bg-white border border-gray-300">
+                  {selected.avatarUrl ? (
+                    <img src={selected.avatarUrl} alt={selected.displayName || selected.platformUsername} className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="text-base font-bold text-white" style={{ backgroundColor: selected.avatarColor || '#6C3BFF', width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {selected.avatarInitial || 'C'}
+                    </span>
+                  )}
                 </div>
                 <div>
                   <p className="text-base font-bold" style={{ color: 'var(--text)' }}>
-                    {selected.displayName}
+                    {selected.displayName || selected.platformUsername}
                   </p>
                   <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                     @{selected.platformUsername} · {platformConfig[selected.platform].label}
+                    {platformConfig[selected.platform].supportsRSS && ' (RSS Feed)'}
                   </p>
                 </div>
               </div>
@@ -576,15 +732,15 @@ export default function CompetitorsPage() {
               <div className="flex items-center gap-6">
                 <div className="text-center">
                   <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>
-                    {formatNumber(selected.followerCount)}
+                    {formatNumber(selected.followerCount || 0)}
                   </p>
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    Followers
+                    {selected.platform === 'youtube' ? 'Subscribers' : 'Followers'}
                   </p>
                 </div>
                 <div className="text-center">
                   <p className="text-xl font-bold" style={{ color: 'var(--success)' }}>
-                    {selected.avgEngagementRate}%
+                    {selected.avgEngagementRate || 0}%
                   </p>
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                     Avg. Engagement
@@ -592,34 +748,36 @@ export default function CompetitorsPage() {
                 </div>
                 <div className="text-center">
                   <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>
-                    {selected.postCount}
+                    {selected.postCount || 0}
                   </p>
                   <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    Tracked Posts
+                    {selected.platform === 'youtube' ? 'Videos' : 'Posts'}
                   </p>
                 </div>
                 <button
-                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all hover:opacity-80"
+                  onClick={() => handleSync(selected.id)}
+                  disabled={isSyncing === selected.id}
+                  className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all hover:opacity-80 disabled:opacity-50"
                   style={{
                     backgroundColor: 'var(--bg-hover)',
                     border: '1px solid var(--border)',
                     color: 'var(--text-muted)',
                   }}
                 >
-                  <RefreshCw size={14} />
-                  Sync Posts
+                  <RefreshCw size={14} className={isSyncing === selected.id ? 'animate-spin' : ''} />
+                  {isSyncing === selected.id ? 'Syncing...' : `Sync ${selected.platform === 'youtube' ? 'Videos' : 'Posts'}`}
                 </button>
               </div>
             </div>
 
             {/* Posts list */}
-            <div>
+            <div className="flex-1 overflow-y-auto pr-1">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
-                  Top Posts
+                  {selected.platform === 'youtube' ? 'Recent Videos' : 'Top Posts'}
                 </h2>
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                  {posts.length} posts tracked
+                  {posts.length} {selected.platform === 'youtube' ? 'videos' : 'posts'} tracked
                 </p>
               </div>
 
@@ -630,16 +788,16 @@ export default function CompetitorsPage() {
                 >
                   <UserSearch size={32} style={{ color: 'var(--text-muted)', opacity: 0.4 }} />
                   <p className="mt-3 text-sm font-medium" style={{ color: 'var(--text-muted)' }}>
-                    No posts synced yet
+                    No {selected.platform === 'youtube' ? 'videos' : 'posts'} synced yet
                   </p>
                   <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
-                    Click "Sync Posts" to fetch the latest content.
+                    Click "Sync {selected.platform === 'youtube' ? 'Videos' : 'Posts'}" to fetch the latest content.
                   </p>
                 </div>
               ) : (
                 <div className="flex flex-col gap-3">
                   {posts.map((post) => (
-                    <PostRow key={post.id} post={post} />
+                    <PostRow key={post.id} post={post} platform={selectedPlatform} />
                   ))}
                 </div>
               )}
@@ -659,7 +817,12 @@ export default function CompetitorsPage() {
       </div>
 
       {/* Modal */}
-      {showModal && <AddCompetitorModal onClose={() => setShowModal(false)} />}
+      {showModal && (
+        <AddCompetitorModal
+          onClose={() => setShowModal(false)}
+          onAdd={handleAdd}
+        />
+      )}
     </div>
   )
 }

@@ -1,11 +1,20 @@
 import type { IpcMain } from 'electron'
 import { getDatabase } from '../services/database'
 import { syncInstagramAnalytics } from '../services/instagramAnalytics'
+import { syncTikTokAnalytics } from '../services/tiktokAnalytics'
+import { syncYouTubeAnalytics } from '../services/youtubeAnalytics'
+
+function getDateThreshold(range?: string): string | null {
+  if (range === 'all') return null
+  if (range === '7d') return "datetime('now', '-7 days')"
+  if (range === '90d') return "datetime('now', '-90 days')"
+  return "datetime('now', '-30 days')" // default to 30d
+}
 
 export function registerAnalyticsHandlers(ipcMain: IpcMain) {
 
-  // ── Sync analytics for all connected Instagram accounts ───────────────────
-  ipcMain.handle('analytics:sync', async (_event, workspaceId: string) => {
+  // ── Sync analytics for a specific connected account ───────────────────
+  ipcMain.handle('analytics:sync', async (_event, workspaceId: string, accountId?: string) => {
     const db = getDatabase()
 
     // Clean up duplicate metrics from previous syncs
@@ -29,26 +38,32 @@ export function registerAnalyticsHandlers(ipcMain: IpcMain) {
         SELECT id FROM account_metrics GROUP BY social_account_id, DATE(recorded_at) HAVING id = MAX(id)
       )
     `).run()
-    console.log('[Analytics] Syncing for workspace:', workspaceId)
+    
+    console.log(`[Analytics] Syncing for workspace: ${workspaceId}, account: ${accountId || 'ALL'}`)
+
+    const filter = accountId ? 'AND id = ?' : ''
+    const params = accountId ? [workspaceId, accountId] : [workspaceId]
 
     const accounts = db.prepare(
-      `SELECT id, platform_username FROM social_accounts WHERE workspace_id = ? AND platform = 'instagram' AND is_active = 1`
-    ).all(workspaceId) as { id: string; platform_username: string }[]
+      `SELECT id, platform_username, platform FROM social_accounts WHERE workspace_id = ? AND is_active = 1 ${filter}`
+    ).all(...params) as { id: string; platform_username: string; platform: string }[]
 
-    console.log('[Analytics] Found accounts:', accounts.length, accounts.map(a => a.platform_username))
-
-    if (accounts.length === 0) {
-      // Try without workspace filter — in case workspace_id mismatch
-      const allAccounts = db.prepare(
-        `SELECT id, platform_username, workspace_id FROM social_accounts WHERE platform = 'instagram' AND is_active = 1`
-      ).all() as { id: string; platform_username: string; workspace_id: string }[]
-      console.log('[Analytics] All Instagram accounts in DB:', allAccounts)
-    }
+    console.log('[Analytics] Found accounts:', accounts.length, accounts.map(a => `${a.platform_username} (${a.platform})`))
 
     const results = []
     for (const account of accounts) {
       try {
-        const result = await syncInstagramAnalytics(account.id)
+        let result
+        if (account.platform === 'instagram') {
+          result = await syncInstagramAnalytics(account.id)
+        } else if (account.platform === 'tiktok') {
+          result = await syncTikTokAnalytics(account.id)
+        } else if (account.platform === 'youtube') {
+          result = await syncYouTubeAnalytics(account.id)
+        } else {
+          console.warn(`[Analytics] Sync not implemented for platform: ${account.platform}`)
+          continue
+        }
         results.push(result)
       } catch (e: any) {
         console.error('[Analytics] Sync error for account', account.id, ':', e.message)
@@ -59,28 +74,34 @@ export function registerAnalyticsHandlers(ipcMain: IpcMain) {
   })
 
   // ── Overview stats ─────────────────────────────────────────────────────────
-  ipcMain.handle('analytics:overview', async (_event, workspaceId: string, accountId?: string) => {
+  ipcMain.handle('analytics:overview', async (_event, workspaceId: string, accountId?: string, range?: string) => {
     const db = getDatabase()
+    const dateThreshold = getDateThreshold(range)
+    const rangeFilter = dateThreshold ? `AND p.published_at >= ${dateThreshold}` : ''
 
-    // Debug logging
-    const debugPostsCount = (db.prepare(`SELECT COUNT(*) as count FROM posts WHERE workspace_id = ?`).get(workspaceId) as any)?.count ?? 0
-    const debugMetricsCount = (db.prepare(`SELECT COUNT(*) as count FROM post_metrics`).get() as any)?.count ?? 0
-    const debugSample = db.prepare(`SELECT id, status, workspace_id FROM posts LIMIT 3`).all()
-    console.log('[Analytics] overview debug — workspace:', workspaceId, 'posts:', debugPostsCount, 'metrics:', debugMetricsCount)
-    console.log('[Analytics] sample posts:', debugSample)
-
-    const totalPosts = debugPostsCount
+    // Calculate totalPosts specific to the account (if provided) and date range
+    const totalPosts = accountId
+      ? (db.prepare(`
+          SELECT COUNT(DISTINCT ppt.post_id) as count
+          FROM post_platform_targets ppt
+          JOIN posts p ON ppt.post_id = p.id
+          WHERE p.workspace_id = ? AND ppt.social_account_id = ? ${rangeFilter}
+        `).get(workspaceId, accountId) as any)?.count ?? 0
+      : (db.prepare(`
+          SELECT COUNT(*) as count 
+          FROM posts 
+          WHERE workspace_id = ? ${dateThreshold ? `AND published_at >= ${dateThreshold}` : ''}
+        `).get(workspaceId) as any)?.count ?? 0
 
     const accountFilter = accountId ? 'AND ppt.social_account_id = ?' : ''
     const params = accountId ? [workspaceId, accountId] : [workspaceId]
-    const paramsWithTwo = accountId ? [workspaceId, accountId] : [workspaceId]
 
     const engagements = (db.prepare(`
       SELECT COALESCE(SUM(pm.likes + pm.comments + pm.shares + pm.saves), 0) as total
       FROM post_metrics pm
       JOIN post_platform_targets ppt ON pm.post_platform_target_id = ppt.id
       JOIN posts p ON ppt.post_id = p.id
-      WHERE p.workspace_id = ? ${accountFilter}
+      WHERE p.workspace_id = ? ${rangeFilter} ${accountFilter}
     `).get(...params) as any)?.total ?? 0
 
     const avgEngagement = (db.prepare(`
@@ -88,56 +109,104 @@ export function registerAnalyticsHandlers(ipcMain: IpcMain) {
       FROM post_metrics pm
       JOIN post_platform_targets ppt ON pm.post_platform_target_id = ppt.id
       JOIN posts p ON ppt.post_id = p.id
-      WHERE p.workspace_id = ? ${accountFilter}
-    `).get(...paramsWithTwo) as any)?.avg ?? 0
+      WHERE p.workspace_id = ? ${rangeFilter} ${accountFilter}
+    `).get(...params) as any)?.avg ?? 0
 
-    const latestFollowers = (db.prepare(`
-      SELECT follower_count FROM account_metrics am
+    const latestMetrics = db.prepare(`
+      SELECT follower_count, following_count FROM account_metrics am
       JOIN social_accounts sa ON am.social_account_id = sa.id
       WHERE sa.workspace_id = ? ${accountId ? 'AND sa.id = ?' : ''}
       ORDER BY am.recorded_at DESC LIMIT 1
-    `).get(...paramsWithTwo) as any)?.follower_count ?? 0
+    `).get(...params) as any
+    
+    const latestFollowers = latestMetrics?.follower_count ?? 0
+    const latestFollowing = latestMetrics?.following_count ?? 0
 
     const impressions = (db.prepare(`
       SELECT COALESCE(SUM(pm.impressions), 0) as total
       FROM post_metrics pm
       JOIN post_platform_targets ppt ON pm.post_platform_target_id = ppt.id
       JOIN posts p ON ppt.post_id = p.id
-      WHERE p.workspace_id = ? ${accountFilter}
-    `).get(...paramsWithTwo) as any)?.total ?? 0
+      WHERE p.workspace_id = ? ${rangeFilter} ${accountFilter}
+    `).get(...params) as any)?.total ?? 0
+
+    let tiktokLikes = 0
+    let instagramReach = 0
+    let youtubeLikes = 0
+    let youtubeComments = 0
+
+    if (accountId) {
+      const accountInfo = db.prepare(`SELECT platform FROM social_accounts WHERE id = ?`).get(accountId) as any
+      const platform = accountInfo?.platform
+
+      if (platform === 'tiktok') {
+        tiktokLikes = (db.prepare(`
+          SELECT total_likes FROM tiktok_account_insights
+          WHERE social_account_id = ?
+          ORDER BY recorded_at DESC LIMIT 1
+        `).get(accountId) as any)?.total_likes ?? 0
+      } else if (platform === 'instagram') {
+        instagramReach = (db.prepare(`
+          SELECT reach FROM instagram_account_insights
+          WHERE social_account_id = ?
+          ORDER BY recorded_at DESC LIMIT 1
+        `).get(accountId) as any)?.reach ?? 0
+      } else if (platform === 'youtube') {
+        const ytStats = db.prepare(`
+          SELECT COALESCE(SUM(pm.likes), 0) as likes, COALESCE(SUM(pm.comments), 0) as comments
+          FROM post_metrics pm
+          JOIN post_platform_targets ppt ON pm.post_platform_target_id = ppt.id
+          JOIN posts p ON ppt.post_id = p.id
+          WHERE ppt.social_account_id = ? ${rangeFilter}
+        `).get(accountId) as any
+        youtubeLikes = ytStats?.likes ?? 0
+        youtubeComments = ytStats?.comments ?? 0
+      }
+    }
 
     return {
       totalPosts,
       totalEngagements: engagements,
       avgEngagementRate: parseFloat(avgEngagement.toFixed(2)),
       followerCount: latestFollowers,
+      followingCount: latestFollowing,
       impressions,
+      tiktokLikes,
+      instagramReach,
+      youtubeLikes,
+      youtubeComments,
     }
   })
 
   // ── Top posts ──────────────────────────────────────────────────────────────
-  ipcMain.handle('analytics:top-posts', async (_event, workspaceId: string, limit = 10, accountId?: string) => {
+  ipcMain.handle('analytics:top-posts', async (_event, workspaceId: string, limit = 10, accountId?: string, range?: string) => {
     const db = getDatabase()
+    const dateThreshold = getDateThreshold(range)
+    const rangeFilter = dateThreshold ? `AND p.published_at >= ${dateThreshold}` : ''
     const accountFilter = accountId ? 'AND ppt.social_account_id = ?' : ''
     const params = accountId ? [workspaceId, accountId, limit] : [workspaceId, limit]
     return db.prepare(`
       SELECT
-        p.id, p.caption, ppt.platform, ppt.permalink,
+        p.id, p.caption, ppt.platform, ppt.permalink, ppt.thumbnail_url,
         pm.likes, pm.comments, pm.shares, pm.saves,
         pm.impressions, pm.reach, pm.video_views,
         pm.engagement_rate, p.published_at
       FROM post_metrics pm
       JOIN post_platform_targets ppt ON pm.post_platform_target_id = ppt.id
       JOIN posts p ON ppt.post_id = p.id
-      WHERE p.workspace_id = ? ${accountFilter}
+      WHERE p.workspace_id = ? 
+        ${rangeFilter}
+        ${accountFilter}
       ORDER BY pm.engagement_rate DESC
       LIMIT ?
     `).all(...params)
   })
 
   // ── Engagement trend (last 30 days) ───────────────────────────────────────
-  ipcMain.handle('analytics:trend', async (_event, workspaceId: string, accountId?: string) => {
+  ipcMain.handle('analytics:trend', async (_event, workspaceId: string, accountId?: string, range?: string) => {
     const db = getDatabase()
+    const dateThreshold = getDateThreshold(range)
+    const rangeFilter = dateThreshold ? `AND p.published_at >= ${dateThreshold}` : ''
     const accountFilter = accountId ? 'AND ppt.social_account_id = ?' : ''
     const params = accountId ? [workspaceId, accountId] : [workspaceId]
     return db.prepare(`
@@ -153,7 +222,7 @@ export function registerAnalyticsHandlers(ipcMain: IpcMain) {
       JOIN posts p ON ppt.post_id = p.id
       WHERE p.workspace_id = ?
         AND p.published_at IS NOT NULL
-        AND p.published_at >= datetime('now', '-365 days')
+        ${rangeFilter}
         ${accountFilter}
       GROUP BY DATE(p.published_at)
       ORDER BY date ASC
@@ -166,7 +235,7 @@ export function registerAnalyticsHandlers(ipcMain: IpcMain) {
     const accountFilter = accountId ? 'AND sa.id = ?' : ''
     const params = accountId ? [workspaceId, accountId] : [workspaceId]
     return db.prepare(`
-      SELECT am.follower_count, am.total_posts, am.recorded_at, sa.platform
+      SELECT am.follower_count, am.following_count, am.total_posts, am.recorded_at, sa.platform
       FROM account_metrics am
       JOIN social_accounts sa ON am.social_account_id = sa.id
       WHERE sa.workspace_id = ? ${accountFilter}

@@ -1,168 +1,148 @@
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
-import type { User } from '@/types/auth'
+import { useProfileStore } from '@/stores/profileStore'
 import logo from '@/assets/logo.png'
-
-// Demo user — remove when real auth is wired up in Phase 2
-const DEMO_USER: User = {
-  id: 'demo-001',
-  email: 'nadhem@agentrix.io',
-  fullName: 'Nadhem',
-  isEmailVerified: true,
-  subscriptionStatus: 'active',
-  subscriptionPlan: 'pro',
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-}
+import { Command, ArrowRight, ChevronRight, Loader } from 'lucide-react'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const { profile, activeWorkspace, checkProfile } = useProfileStore()
   const setUser = useAuthStore((s) => s.setUser)
+  const [isLoading, setIsLoading] = useState(true)
 
-  function handleDemoLogin() {
-    setUser(DEMO_USER)
+  useEffect(() => {
+    checkProfile().then((hasProfile) => {
+      if (!hasProfile) {
+        navigate('/signup', { replace: true })
+      } else {
+        setIsLoading(false)
+      }
+    }).catch((err) => {
+      console.error('Failed to load profile context on login:', err)
+      setIsLoading(false)
+    })
+  }, [checkProfile, navigate])
+
+  function handleLaunchActive() {
+    if (!profile) return
+    
+    // Log in locally in authStore
+    setUser({
+      id: 'local-user',
+      email: 'local@agentrix.ai',
+      fullName: profile.name,
+      isEmailVerified: true,
+      subscriptionStatus: 'active',
+      subscriptionPlan: 'pro',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    })
+    
+    // Launch dashboard
     navigate('/dashboard')
   }
 
-  return (
-    <div className="w-full max-w-sm animate-fade-in space-y-8 px-2">
+  if (isLoading) {
+    return (
+      <div className="flex w-full items-center justify-center p-6">
+        <Loader className="animate-spin text-indigo-400" size={24} />
+      </div>
+    )
+  }
 
-      {/* Logo */}
+  return (
+    <div className="w-full max-w-md animate-fade-in space-y-8 px-4">
+      
+      {/* Brand Header */}
       <div className="text-center">
         <img
           src={logo}
           alt="Agentrix"
-          className="mx-auto mb-4 h-16 w-16 rounded-2xl object-contain"
+          className="mx-auto mb-4 h-16 w-16 rounded-2xl object-contain shadow-lg glow-primary"
         />
-        <h1 className="gradient-text text-2xl font-bold tracking-tight">Agentrix</h1>
+        <h1 className="gradient-text text-3xl font-extrabold tracking-tight">Agentrix</h1>
         <p className="mt-1.5 text-sm" style={{ color: 'var(--text-muted)' }}>
-          Sign in to your workspace
+          Sign in to your offline workspace
         </p>
       </div>
 
-      {/* Card */}
+      {/* Main Glassmorphic Switcher Card */}
       <div
-        className="rounded-2xl p-6 space-y-5"
+        className="rounded-3xl p-8 space-y-6 backdrop-blur-2xl border border-white/5"
         style={{
-          backgroundColor: 'var(--bg-card)',
-          border: '1px solid var(--border)',
+          backgroundColor: 'rgba(15, 23, 42, 0.45)',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.05)',
         }}
       >
-        {/* Email */}
-        <div className="space-y-1.5">
-          <label
-            className="block text-xs font-medium"
-            style={{ color: 'var(--text-muted)' }}
-            htmlFor="email"
-          >
-            Email address
-          </label>
-          <input
-            id="email"
-            type="email"
-            placeholder="you@company.com"
-            className="w-full rounded-lg px-3 py-2.5 text-sm outline-none transition-all"
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border)',
-              color: 'var(--text)',
-            }}
-            onFocus={(e) => {
-              e.currentTarget.style.borderColor = 'var(--primary)'
-              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(108,59,255,0.15)'
-            }}
-            onBlur={(e) => {
-              e.currentTarget.style.borderColor = 'var(--border)'
-              e.currentTarget.style.boxShadow = 'none'
-            }}
-          />
-        </div>
+        {profile ? (
+          <div className="space-y-6">
+            {/* Active profile header */}
+            <div className="space-y-2 text-center">
+              <div 
+                className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl text-2xl font-bold text-white shadow-inner"
+                style={{ background: 'linear-gradient(135deg, var(--primary), var(--secondary))' }}
+              >
+                {profile.name[0].toUpperCase()}
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-white">{profile.name}</h2>
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  Active Workspace: <strong className="text-indigo-300">{activeWorkspace?.name ?? 'My Workspace'}</strong>
+                </p>
+              </div>
+            </div>
 
-        {/* Password */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <label
-              className="block text-xs font-medium"
-              style={{ color: 'var(--text-muted)' }}
-              htmlFor="password"
+            {/* Launch Workspace Button */}
+            <button
+              onClick={handleLaunchActive}
+              className="flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold text-white transition-all hover:scale-[1.02] hover:opacity-95 glow-primary"
+              style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
             >
-              Password
-            </label>
-  
+              Launch Workspace
+              <ArrowRight size={16} />
+            </button>
+
+            {/* Switch / Add Workspace Row */}
+            <div className="flex items-center justify-between border-t border-white/5 pt-4 text-xs">
+              <span style={{ color: 'var(--text-muted)' }}>Need another workspace?</span>
+              <Link
+                to="/signup"
+                className="flex items-center gap-1 font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
+              >
+                Create Workspace
+                <ChevronRight size={12} />
+              </Link>
+            </div>
           </div>
-          <input
-            id="password"
-            type="password"
-            placeholder="••••••••"
-            className="w-full rounded-lg px-3 py-2.5 text-sm outline-none transition-all"
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border)',
-              color: 'var(--text)',
-            }}
-            onFocus={(e) => {
-              e.currentTarget.style.borderColor = 'var(--primary)'
-              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(108,59,255,0.15)'
-            }}
-            onBlur={(e) => {
-              e.currentTarget.style.borderColor = 'var(--border)'
-              e.currentTarget.style.boxShadow = 'none'
-            }}
-          />
-
-        </div>
-
-        {/* Sign in button */}
-        <button
-          type="button"
-          onClick={handleDemoLogin}
-          className="w-full rounded-lg py-2.5 text-sm font-semibold text-white transition-all hover:opacity-90 glow-primary"
-          style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
-        >
-          Sign in
-        </button>
-        <div className="space-y-0.8">                         
-            <a
-              href="/forgot-password"
-              className="text-xs transition-colors hover:opacity-80"
-              style={{ color: 'var(--secondary)' }}
+        ) : (
+          <div className="space-y-5 text-center">
+            {/* No profiles found state */}
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400 mx-auto border border-indigo-500/20">
+              <Command size={22} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white">No active profiles found</h3>
+              <p className="mt-1 text-xs px-2" style={{ color: 'var(--text-muted)' }}>
+                Create a free offline workspace to start publishing and checking analytics.
+              </p>
+            </div>
+            
+            <Link
+              to="/signup"
+              className="flex w-full items-center justify-center gap-2 rounded-xl py-3 text-sm font-bold text-white transition-all hover:scale-[1.02] hover:opacity-95 glow-primary"
+              style={{ background: 'linear-gradient(135deg, var(--primary), var(--accent))' }}
             >
-              Forgot password?
-            </a>
+              Get Started Free
+              <ArrowRight size={16} />
+            </Link>
           </div>
-  
-        {/* Divider */}
-        <div className="flex items-center gap-3">
-          <div className="h-px flex-1" style={{ backgroundColor: 'var(--border)' }} />
-          <span className="text-xs" style={{ color: 'var(--text-muted)' }}>or</span>
-          <div className="h-px flex-1" style={{ backgroundColor: 'var(--border)' }} />
-        </div>
-
-        {/* Demo access */}
-        <button
-          type="button"
-          onClick={handleDemoLogin}
-          className="w-full rounded-lg py-2.5 text-sm font-medium transition-all hover:opacity-80"
-          style={{
-            backgroundColor: 'var(--bg-hover)',
-            border: '1px solid var(--border)',
-            color: 'var(--text-muted)',
-          }}
-        >
-          Continue as Demo ✦
-        </button>
+        )}
       </div>
 
-      {/* Footer */}
+      {/* Trust Guarantee footer */}
       <p className="text-center text-xs" style={{ color: 'var(--text-muted)' }}>
-        Don't have an account?{' '}
-        <a
-          href="/signup"
-          className="font-semibold transition-colors hover:opacity-80"
-          style={{ color: 'var(--secondary)' }}
-        >
-          Sign up free
-        </a>
+        ✦ Offline-first & AES-256 encrypted. Your data never leaves your computer.
       </p>
     </div>
   )

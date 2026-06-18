@@ -15,10 +15,13 @@ const ipc = window.ipcRenderer as {
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
 export const profileIpc = {
-  check: () => ipc.invoke('profile:check'),
+  getActive: () => ipc.invoke('profile:get-active'),
   create: (data: unknown) => ipc.invoke('profile:create', data),
-  listWorkspaces: () => ipc.invoke('workspace:list'),
+  update: (id: string, data: unknown) => ipc.invoke('profile:update', id, data),
+  listWorkspaces: (profileId: string) => ipc.invoke('workspace:list', profileId),
   createWorkspace: (data: unknown) => ipc.invoke('workspace:create', data),
+  switchWorkspace: (id: string) => ipc.invoke('workspace:switch', id),
+  getActiveWorkspace: () => ipc.invoke('workspace:get-active'),
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────────────

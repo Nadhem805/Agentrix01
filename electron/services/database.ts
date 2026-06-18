@@ -64,6 +64,7 @@ function runMigrations(db: DB): void {
     { version: 1, up: migration_001_initial_schema },
     { version: 2, up: migration_002_ollama_config },
     { version: 3, up: migration_003_extended_analytics },
+    { version: 4, up: migration_004_advanced_analytics },
   ]
 
   for (const m of migrations) {
@@ -342,4 +343,20 @@ CREATE INDEX IF NOT EXISTS idx_ig_insights_account    ON instagram_account_insig
 CREATE INDEX IF NOT EXISTS idx_ig_demo_account        ON instagram_audience_demographics(social_account_id, type);
 CREATE INDEX IF NOT EXISTS idx_ig_times_account       ON instagram_posting_times(social_account_id);
 CREATE INDEX IF NOT EXISTS idx_ig_hashtags_account    ON instagram_hashtag_performance(social_account_id, avg_engagement DESC);
+`
+
+// ─── Migration 004 — Advanced Analytics ──────────────────────────────────────
+
+const migration_004_advanced_analytics = `
+
+ALTER TABLE post_platform_targets ADD COLUMN thumbnail_url TEXT;
+
+CREATE TABLE IF NOT EXISTS tiktok_account_insights (
+  id                TEXT PRIMARY KEY,
+  social_account_id TEXT NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
+  total_likes       INTEGER NOT NULL DEFAULT 0,
+  recorded_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tiktok_insights_account ON tiktok_account_insights(social_account_id, recorded_at);
 `
